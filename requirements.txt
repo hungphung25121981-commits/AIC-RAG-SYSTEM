@@ -1,0 +1,14 @@
+torch>=2.1.0
+torchvision>=0.16.0
+transformers>=4.44.0
+accelerate>=0.30.0
+sentencepiece
+faiss-gpu; sys_platform == "linux"
+faiss-cpu; sys_platform != "linux"
+rank_bm25
+pyvi
+pillow
+numpy
+tqdm
+einops
+timm

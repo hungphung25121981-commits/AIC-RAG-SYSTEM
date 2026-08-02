@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+index_data/
+*.faiss
+*.pkl
+.ipynb_checkpoints/
+*.egg-info/
+.env
