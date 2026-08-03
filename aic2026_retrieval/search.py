@@ -20,6 +20,8 @@ class DenseSearcher:
         import faiss
         from transformers import AutoModel, AutoProcessor
 
+        self.device = config.DEVICE  # Khởi tạo self.device ở đây
+
         print("[DenseSearcher] Loading FAISS index...")
         self.index = faiss.read_index(config.FAISS_INDEX_PATH)
 
@@ -28,31 +30,30 @@ class DenseSearcher:
 
         print("[DenseSearcher] Loading SigLIP2...")
         dtype = getattr(torch, config.DTYPE)
-        self.model = AutoModel.from_pretrained(config.SIGLIP2_MODEL_ID, torch_dtype=dtype).to(config.DEVICE).eval()
+        self.model = AutoModel.from_pretrained(config.SIGLIP2_MODEL_ID, torch_dtype=dtype).to(self.device).eval()
         self.processor = AutoProcessor.from_pretrained(config.SIGLIP2_MODEL_ID)
 
     @torch.no_grad()
-   def encode_query(self, query_en: str) -> np.ndarray:
-    inputs = self.processor(text=[query_en], return_tensors="pt", padding=True).to(self.device)
-    inputs = {k: v.to(getattr(torch, config.DTYPE)) if v.dtype == torch.float32 else v 
-              for k, v in inputs.items()}
-    
-    # Lấy output từ model
-    outputs = self.model.get_text_features(**inputs)
-    
-    # Trích xuất PyTorch Tensor thực sự từ Output Object
-    if hasattr(outputs, "text_embeds") and outputs.text_embeds is not None:
-        feats = outputs.text_embeds
-    elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-        feats = outputs.pooler_output
-    else:
-        feats = outputs
+    def encode_query(self, query_en: str) -> np.ndarray:
+        inputs = self.processor(text=[query_en], return_tensors="pt", padding=True).to(self.device)
+        inputs = {k: v.to(getattr(torch, config.DTYPE)) if v.dtype == torch.float32 else v 
+                  for k, v in inputs.items()}
+        
+        # Lấy output từ model
+        outputs = self.model.get_text_features(**inputs)
+        
+        # Trích xuất PyTorch Tensor thực sự từ Output Object
+        if hasattr(outputs, "text_embeds") and outputs.text_embeds is not None:
+            feats = outputs.text_embeds
+        elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+            feats = outputs.pooler_output
+        else:
+            feats = outputs
 
-    # Normalize L2
-    feats = feats / feats.norm(dim=-1, keepdim=True)
-    return feats.float().cpu().numpy()
+        # Normalize L2
+        feats = feats / feats.norm(dim=-1, keepdim=True)
+        return feats.float().cpu().numpy()
 
-    
     def search(self, query_en: str, top_k: int = None) -> List[Tuple[int, float]]:
         """Trả về list (int_id, score) đã sort giảm dần theo cosine similarity."""
         top_k = top_k or config.DENSE_TOPK
@@ -100,7 +101,7 @@ def rrf_fusion(rank_lists: List[List[int]], k: int = None) -> List[Tuple[int, fl
 
 
 def hybrid_search(query_vi: str, query_en: str, dense: DenseSearcher, bm25: BM25Searcher,
-                   top_k: int = None) -> List[Tuple[int, float]]:
+                  top_k: int = None) -> List[Tuple[int, float]]:
     """
     Pipeline đầy đủ 1 query: search 2 nhánh -> RRF fusion.
     query_vi: dùng cho BM25 (đã tokenize tiếng Việt).
