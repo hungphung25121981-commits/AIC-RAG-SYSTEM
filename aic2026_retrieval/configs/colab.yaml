@@ -1,0 +1,32 @@
+# ==============================================================================
+# AIC 2026 Retrieval Pipeline -- Config COLAB
+# Dùng: os.environ["AIC_CONFIG"] = "configs/colab.yaml"  (đặt TRƯỚC khi import config)
+# Giả định dataset để trong Google Drive, đã mount ở /content/drive
+# ==============================================================================
+
+dataset:
+  videos_dir:        "/content/drive/MyDrive/aic2026/Videos"
+  keyframes_dir:      "/content/drive/MyDrive/aic2026/Keyframes"
+  objects_dir:        "/content/drive/MyDrive/aic2026/Objects"
+  clipfeat_dir:        "/content/drive/MyDrive/aic2026/CLIPFeatures"
+  metadata_dir:        "/content/drive/MyDrive/aic2026/Metadata"
+  mapkeyframes_dir:    "/content/drive/MyDrive/aic2026/map-keyframes"
+
+index_dir: "/content/index_data"   # để ở local disk Colab cho nhanh, không để trong Drive
+
+models:
+  siglip2: "google/siglip2-so400m-patch14-384"
+  internvl: "OpenGVLab/InternVL2_5-8B"
+  translate: "Helsinki-NLP/opus-mt-vi-en"
+
+device: "cuda"
+dtype: "bfloat16"
+
+search:
+  dense_topk: 100
+  bm25_topk: 100
+  rrf_k: 60
+  final_topk: 100
+  rerank_topk: 30
+
+object_score_threshold: 0.3

@@ -1,0 +1,33 @@
+# ==============================================================================
+# AIC 2026 Retrieval Pipeline -- Config LOCAL (mặc định)
+# Đổi các path bên dưới cho khớp máy bạn. Không set AIC_CONFIG => dùng file này.
+# ==============================================================================
+
+dataset:
+  # Mỗi giá trị: 1 đường dẫn cụ thể, hoặc "auto" (tự dò trong /kaggle/input/*/
+  # -- chỉ có tác dụng khi chạy trên Kaggle, local thì phải điền path thật)
+  videos_dir:        "./data/Videos"
+  keyframes_dir:      "./data/Keyframes"
+  objects_dir:        "./data/Objects"
+  clipfeat_dir:        "./data/CLIPFeatures"
+  metadata_dir:        "./data/Metadata"
+  mapkeyframes_dir:    "./data/map-keyframes"   # CSV: n,pts_time,fps,frame_idx (1 file/video)
+
+index_dir: "./index_data"
+
+models:
+  siglip2: "google/siglip2-so400m-patch14-384"
+  internvl: "OpenGVLab/InternVL2_5-8B"
+  translate: "Helsinki-NLP/opus-mt-vi-en"
+
+device: "cuda"     # "cuda" | "cpu"
+dtype: "bfloat16"   # "bfloat16" | "float32"
+
+search:
+  dense_topk: 100
+  bm25_topk: 100
+  rrf_k: 60
+  final_topk: 100
+  rerank_topk: 30
+
+object_score_threshold: 0.3

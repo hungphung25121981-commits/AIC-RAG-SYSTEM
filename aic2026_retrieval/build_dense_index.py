@@ -87,6 +87,7 @@ def main():
                 "int_id": it.int_id,
                 "video_id": it.video_id,
                 "frame_id": it.frame_id,
+                "pts_time": it.pts_time,
                 "keyframe_path": it.keyframe_path,
                 "object_json_path": it.object_json_path,
             }

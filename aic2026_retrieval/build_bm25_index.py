@@ -29,7 +29,7 @@ def main():
     id_map = list(utils.read_jsonl(config.ID_MAP_PATH))
     print(f"Tổng số keyframe: {len(id_map)}")
 
-    # 1) load caption nếu có
+    # 1) load caption nếu có (key = int_id của frame ĐẠI DIỆN đã được caption)
     captions = {}
     import os
     if os.path.isfile(config.CAPTION_JSONL_PATH):
@@ -37,6 +37,16 @@ def main():
             captions[row["int_id"]] = row.get("caption", "")
     else:
         print("[WARN] Chưa thấy captions.jsonl -- BM25 sẽ chỉ dùng object + metadata.")
+
+    # 1b) nếu có dedup_map.jsonl (đã dedup trước khi caption) -> map mọi int_id
+    # về caption của frame đại diện tương ứng
+    dedup_path = os.path.join(config.INDEX_DIR, "dedup_map.jsonl")
+    rep_of = {}  # int_id -> representative_int_id
+    if os.path.isfile(dedup_path):
+        for row in utils.read_jsonl(dedup_path):
+            rep_of[row["int_id"]] = row["representative_int_id"]
+        print(f"Đã load dedup_map ({len(rep_of)} dòng) -- các frame trùng sẽ dùng "
+              f"chung caption với frame đại diện.")
 
     # 2) cache metadata theo video_id (tránh đọc file JSON lặp lại)
     metadata_cache = {}
@@ -51,7 +61,8 @@ def main():
             desc = meta.get("description", "") or meta.get("Description", "")
             metadata_cache[video_id] = f"{title} {desc}".strip()
 
-        caption_text = captions.get(it["int_id"], "")
+        lookup_id = rep_of.get(it["int_id"], it["int_id"])  # frame trùng -> tra caption của đại diện
+        caption_text = captions.get(lookup_id, "")
         object_labels = utils.load_objects(it.get("object_json_path"))
         doc_text = " ".join([
             caption_text,

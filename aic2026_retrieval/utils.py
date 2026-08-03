@@ -5,6 +5,7 @@ tokenizer tiếng Việt cho BM25.
 
 import os
 import json
+import csv
 import re
 from dataclasses import dataclass, asdict
 from typing import Iterator, List, Optional
@@ -17,28 +18,49 @@ class KeyframeItem:
     """Một keyframe = 1 đơn vị trong index."""
     int_id: int          # id nội bộ, tăng dần, dùng làm hàng trong FAISS
     video_id: str         # vd "L01_V001"
-    frame_id: int          # chỉ số frame trong video gốc (đọc từ metadata do BTC cấp)
+    frame_id: int          # chỉ số frame trong video gốc (đọc từ map-keyframes CSV)
     keyframe_path: str    # đường dẫn ảnh keyframe trên đĩa
     object_json_path: Optional[str] = None
     stem: str = ""         # tên file không đuôi, vd "0000"
+    pts_time: Optional[float] = None   # thời điểm (giây) trong video, nếu có
+
+
+def _read_map_keyframes_csv(video_id: str) -> Optional[list]:
+    """
+    Đọc file map-keyframes/<video_id>.csv -- format THẬT của dataset AIC
+    (xác nhận qua dataset mẫu tham khảo), gồm 4 cột:
+        n, pts_time, fps, frame_idx
+    Trong đó:
+      - n         : thứ tự keyframe (1, 2, 3, ...), khớp với thứ tự file ảnh
+                    trong Keyframes/<video_id>/ khi sort tăng dần.
+      - pts_time  : thời điểm (giây) của keyframe trong video.
+      - frame_idx : chỉ số frame THẬT trong video gốc -- đây chính là giá trị
+                    cần dùng làm frame_id khi nộp bài.
+    Trả về list (frame_idx, pts_time) theo đúng thứ tự n=1,2,3... hoặc None nếu không có file.
+    """
+    path = os.path.join(config.MAPKEYFRAMES_DIR, video_id + ".csv")
+    if not os.path.isfile(path):
+        return None
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append((int(float(row["frame_idx"])), float(row["pts_time"])))
+    return rows
 
 
 def _read_frame_index_metadata(video_kf_dir: str) -> dict:
     """
-    Đọc file metadata ánh xạ tên keyframe -> frame_id thật trong video gốc.
-    BTC quy định: 'vị trí (frame index) tương ứng của mỗi keyframe được ghi
-    trong file metadata'. Tuỳ format thực tế BTC cấp (thường là
-    <video_id>.json hoặc map.json trong chính thư mục keyframe), chỉnh lại
-    hàm này cho khớp. Ở đây hỗ trợ 2 dạng phổ biến:
-      1) file "<video_kf_dir>/map.json"  -> {"0000": 1523, "0001": 1601, ...}
-      2) nếu không có map.json, fallback: dùng chính tên file (int(stem))
-         làm frame_id (chỉ đúng nếu keyframe được đặt tên = frame index thật)
+    Fallback cũ: đọc map.json trong chính thư mục keyframe nếu có (một số
+    dataset AIC dùng format này thay vì CSV). Chỉ dùng khi không tìm thấy
+    file map-keyframes/<video_id>.csv (xem _read_map_keyframes_csv ở trên,
+    đây mới là nguồn chính xác nên ưu tiên).
     """
     map_path = os.path.join(video_kf_dir, "map.json")
     if os.path.isfile(map_path):
         with open(map_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {}  # fallback sẽ xử lý ở iter_all_keyframes()
+    return {}
 
 
 def iter_all_keyframes() -> Iterator[KeyframeItem]:
@@ -46,6 +68,14 @@ def iter_all_keyframes() -> Iterator[KeyframeItem]:
     Duyệt toàn bộ Keyframes/<video_id>/*.jpg theo đúng thứ tự tăng dần,
     sinh ra KeyframeItem cho từng ảnh. int_id sinh tuần tự -> dùng để
     map ngược lại (video_id, frame_id) sau khi search FAISS.
+
+    Thứ tự ưu tiên xác định frame_id thật:
+      1) map-keyframes/<video_id>.csv (n, pts_time, fps, frame_idx) -- ĐÚNG NHẤT,
+         khớp format thật của dataset AIC. Cột 'n' tương ứng thứ tự ảnh keyframe
+         khi sort tăng dần trong thư mục.
+      2) map.json trong thư mục keyframe (một số dataset dùng format này).
+      3) fallback cuối: lấy số trong tên file làm frame_id (CHỈ đúng nếu tên
+         file thực sự là frame index -- kém tin cậy nhất, nên tránh).
     """
     int_id = 0
     video_ids = sorted(os.listdir(config.KEYFRAMES_DIR))
@@ -54,19 +84,30 @@ def iter_all_keyframes() -> Iterator[KeyframeItem]:
         if not os.path.isdir(video_kf_dir):
             continue
 
-        frame_map = _read_frame_index_metadata(video_kf_dir)
         obj_dir = os.path.join(config.OBJECTS_DIR, video_id)
-
         filenames = sorted(
             f for f in os.listdir(video_kf_dir)
             if f.lower().endswith((".jpg", ".jpeg", ".png"))
         )
-        for fname in filenames:
+
+        csv_rows = _read_map_keyframes_csv(video_id)   # ưu tiên #1 -- list[(frame_idx, pts_time)]
+        json_frame_map = {} if csv_rows else _read_frame_index_metadata(video_kf_dir)  # ưu tiên #2
+
+        if csv_rows and len(csv_rows) != len(filenames):
+            print(f"[WARN] {video_id}: số dòng CSV ({len(csv_rows)}) khác số "
+                  f"file keyframe ({len(filenames)}) -- kiểm tra lại dataset, "
+                  f"tạm fallback sang phương án khác cho video này.")
+            csv_rows = None
+
+        for i, fname in enumerate(filenames):
             stem = os.path.splitext(fname)[0]
-            if stem in frame_map:
-                frame_id = int(frame_map[stem])
+            pts_time = None
+
+            if csv_rows:
+                frame_id, pts_time = csv_rows[i]
+            elif stem in json_frame_map:
+                frame_id = int(json_frame_map[stem])
             else:
-                # fallback: tên file chính là frame index (chỉnh nếu dataset khác)
                 digits = re.sub(r"\D", "", stem)
                 frame_id = int(digits) if digits else int_id
 
@@ -78,6 +119,7 @@ def iter_all_keyframes() -> Iterator[KeyframeItem]:
                 keyframe_path=os.path.join(video_kf_dir, fname),
                 object_json_path=obj_json if os.path.isfile(obj_json) else None,
                 stem=stem,
+                pts_time=pts_time,
             )
             int_id += 1
 

@@ -1,0 +1,33 @@
+# ==============================================================================
+# AIC 2026 Retrieval Pipeline -- Config KAGGLE
+# Dùng: os.environ["AIC_CONFIG"] = "configs/kaggle.yaml"  (đặt TRƯỚC khi import config)
+# hoặc: !AIC_CONFIG=configs/kaggle.yaml python build_dense_index.py
+# ==============================================================================
+
+dataset:
+  # "auto" -> tự quét /kaggle/input/*/<TênThưMục> (mỗi cái là 1 dataset đã Add Data)
+  videos_dir:        "auto"
+  keyframes_dir:      "auto"
+  objects_dir:        "auto"
+  clipfeat_dir:        "auto"
+  metadata_dir:        "auto"
+  mapkeyframes_dir:    "auto"   # thường tên dataset dạng "map-keyframes-aic..."
+
+index_dir: "/kaggle/working/index_data"
+
+models:
+  siglip2: "google/siglip2-so400m-patch14-384"
+  internvl: "OpenGVLab/InternVL2_5-8B"
+  translate: "Helsinki-NLP/opus-mt-vi-en"
+
+device: "cuda"
+dtype: "bfloat16"
+
+search:
+  dense_topk: 100
+  bm25_topk: 100
+  rrf_k: 60
+  final_topk: 100
+  rerank_topk: 30
+
+object_score_threshold: 0.3

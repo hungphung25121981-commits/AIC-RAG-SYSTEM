@@ -1,0 +1,32 @@
+# ==============================================================================
+# AIC 2026 Retrieval Pipeline -- Config SAMPLE (dữ liệu mẫu nhỏ để test nhanh)
+# Dùng: os.environ["AIC_CONFIG"] = "configs/sample.yaml"
+# Chạy python create_sample_dataset.py trước để sinh dữ liệu giả vào ./sample_data
+# ==============================================================================
+
+dataset:
+  videos_dir:        "./sample_data/Videos"
+  keyframes_dir:      "./sample_data/Keyframes"
+  objects_dir:        "./sample_data/Objects"
+  clipfeat_dir:        "./sample_data/CLIPFeatures"
+  metadata_dir:        "./sample_data/Metadata"
+  mapkeyframes_dir:    "./sample_data/map-keyframes"
+
+index_dir: "./sample_index_data"
+
+models:
+  siglip2: "google/siglip2-so400m-patch14-384"
+  internvl: "OpenGVLab/InternVL2_5-8B"
+  translate: "Helsinki-NLP/opus-mt-vi-en"
+
+device: "cuda"
+dtype: "bfloat16"
+
+search:
+  dense_topk: 20
+  bm25_topk: 20
+  rrf_k: 60
+  final_topk: 20
+  rerank_topk: 10
+
+object_score_threshold: 0.3

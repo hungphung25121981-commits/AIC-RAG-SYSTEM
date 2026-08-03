@@ -73,9 +73,25 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
+    parser.add_argument("--dedup-map", action="store_true",
+                         help="Chỉ caption các frame đại diện trong dedup_map.jsonl "
+                              "(chạy dedup_keyframes.py trước). Giảm mạnh khối lượng caption.")
+    parser.add_argument("--max-new-tokens", type=int, default=48,
+                         help="Giảm xuống (vd 32-48) để tăng tốc, caption chỉ cần 1-2 câu ngắn.")
     args = parser.parse_args()
 
     items = list(utils.read_jsonl(config.ID_MAP_PATH))
+
+    if args.dedup_map:
+        dedup_path = os.path.join(config.INDEX_DIR, "dedup_map.jsonl")
+        assert os.path.isfile(dedup_path), \
+            "Chưa có dedup_map.jsonl -- chạy 'python dedup_keyframes.py' trước."
+        dedup_rows = list(utils.read_jsonl(dedup_path))
+        representative_ids = {r["int_id"] for r in dedup_rows if r["int_id"] == r["representative_int_id"]}
+        items = [it for it in items if it["int_id"] in representative_ids]
+        print(f"Đang dùng dedup_map: chỉ caption {len(items)} frame đại diện "
+              f"(thay vì {len(dedup_rows)} frame gốc).")
+
     items = [it for i, it in enumerate(items) if i % args.num_shards == args.shard]
     print(f"[shard {args.shard}/{args.num_shards}] Số keyframe cần caption: {len(items)}")
 
@@ -87,7 +103,7 @@ def main():
 
     print("Đang load InternVL2.5...")
     model, tokenizer = load_internvl()
-    generation_config = dict(max_new_tokens=128, do_sample=False)
+    generation_config = dict(max_new_tokens=args.max_new_tokens, do_sample=False)
 
     for it in tqdm(items, desc=f"Captioning (shard {args.shard})"):
         if it["int_id"] in done_ids:
