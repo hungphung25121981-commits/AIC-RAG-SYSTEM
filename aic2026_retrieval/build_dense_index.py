@@ -40,16 +40,26 @@ def encode_images(model, processor, image_paths, batch_size, device):
                 imgs.append(Image.open(p).convert("RGB"))
             except Exception as e:
                 print(f"[WARN] Không mở được ảnh {p}: {e}")
-                imgs.append(Image.new("RGB", (384, 384)))  # ảnh trắng placeholder, tránh lệch index
+                imgs.append(Image.new("RGB", (384, 384)))  
 
         inputs = processor(images=imgs, return_tensors="pt").to(device)
         inputs = {k: v.to(getattr(torch, config.DTYPE)) if v.dtype == torch.float32 else v
                   for k, v in inputs.items()}
-        feats = model.get_image_features(**inputs)
+        
+    
+        outputs = model.get_image_features(**inputs)
+        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+            feats = outputs.pooler_output
+        elif hasattr(outputs, "image_embeds") and outputs.image_embeds is not None:
+            feats = outputs.image_embeds
+        else:
+            feats = outputs
+
         feats = feats / feats.norm(dim=-1, keepdim=True)
+   
+
         all_embs.append(feats.float().cpu().numpy())
     return np.concatenate(all_embs, axis=0)
-
 
 def main():
     parser = argparse.ArgumentParser()
