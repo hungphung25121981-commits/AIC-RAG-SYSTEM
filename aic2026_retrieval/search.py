@@ -32,12 +32,27 @@ class DenseSearcher:
         self.processor = AutoProcessor.from_pretrained(config.SIGLIP2_MODEL_ID)
 
     @torch.no_grad()
-    def encode_query(self, query_en: str) -> np.ndarray:
-        inputs = self.processor(text=[query_en], padding="max_length", return_tensors="pt").to(config.DEVICE)
-        feats = self.model.get_text_features(**inputs)
-        feats = feats / feats.norm(dim=-1, keepdim=True)
-        return feats.float().cpu().numpy().astype(np.float32)
+   def encode_query(self, query_en: str) -> np.ndarray:
+    inputs = self.processor(text=[query_en], return_tensors="pt", padding=True).to(self.device)
+    inputs = {k: v.to(getattr(torch, config.DTYPE)) if v.dtype == torch.float32 else v 
+              for k, v in inputs.items()}
+    
+    # Lấy output từ model
+    outputs = self.model.get_text_features(**inputs)
+    
+    # Trích xuất PyTorch Tensor thực sự từ Output Object
+    if hasattr(outputs, "text_embeds") and outputs.text_embeds is not None:
+        feats = outputs.text_embeds
+    elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+        feats = outputs.pooler_output
+    else:
+        feats = outputs
 
+    # Normalize L2
+    feats = feats / feats.norm(dim=-1, keepdim=True)
+    return feats.float().cpu().numpy()
+
+    
     def search(self, query_en: str, top_k: int = None) -> List[Tuple[int, float]]:
         """Trả về list (int_id, score) đã sort giảm dần theo cosine similarity."""
         top_k = top_k or config.DENSE_TOPK
