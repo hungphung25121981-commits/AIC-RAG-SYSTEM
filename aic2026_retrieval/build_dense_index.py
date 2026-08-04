@@ -40,26 +40,21 @@ def encode_images(model, processor, image_paths, batch_size, device):
                 imgs.append(Image.open(p).convert("RGB"))
             except Exception as e:
                 print(f"[WARN] Không mở được ảnh {p}: {e}")
-                imgs.append(Image.new("RGB", (384, 384)))  
+                imgs.append(Image.new("RGB", (384, 384)))  # ảnh trắng placeholder, tránh lệch index
 
         inputs = processor(images=imgs, return_tensors="pt").to(device)
         inputs = {k: v.to(getattr(torch, config.DTYPE)) if v.dtype == torch.float32 else v
                   for k, v in inputs.items()}
-        
-    
-        outputs = model.get_image_features(**inputs)
-        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-            feats = outputs.pooler_output
-        elif hasattr(outputs, "image_embeds") and outputs.image_embeds is not None:
-            feats = outputs.image_embeds
-        else:
-            feats = outputs
 
+        outputs = model.get_image_features(**inputs)
+        # SigLIP2 tuỳ version transformers trả về tensor thẳng hoặc object
+        # ModelOutput (pooler_output/image_embeds/...) -- xử lý chung ở utils.py
+        feats = utils.extract_feature_tensor(outputs)
         feats = feats / feats.norm(dim=-1, keepdim=True)
-   
 
         all_embs.append(feats.float().cpu().numpy())
     return np.concatenate(all_embs, axis=0)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -72,6 +67,12 @@ def main():
     if args.limit:
         items = items[: args.limit]
     print(f"Tổng số keyframe: {len(items)}")
+
+    if len(items) == 0:
+        raise RuntimeError(
+            "Không có keyframe nào để encode (items rỗng). Chạy 'python check_config.py' "
+            "để kiểm tra lại path dataset trước khi chạy tiếp."
+        )
 
     print("Đang load model SigLIP2...")
     model, processor = load_siglip2()
