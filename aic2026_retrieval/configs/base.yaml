@@ -6,12 +6,12 @@
 dataset:
   # Mỗi giá trị: 1 đường dẫn cụ thể, hoặc "auto" (tự dò trong /kaggle/input/*/
   # -- chỉ có tác dụng khi chạy trên Kaggle, local thì phải điền path thật)
-  videos_dir:        "./data/Videos"
-  keyframes_dir:      "./data/Keyframes"
-  objects_dir:        "./data/Objects"
-  clipfeat_dir:        "./data/CLIPFeatures"
-  metadata_dir:        "./data/Metadata"
-  mapkeyframes_dir:    "./data/map-keyframes"   # CSV: n,pts_time,fps,frame_idx (1 file/video)
+  videos_dir:        auto
+  keyframes_dir:     auto
+  objects_dir:       auto
+  clipfeat_dir:      auto
+  metadata_dir:      auto
+  mapkeyframes_dir:  auto   # CSV: n,pts_time,fps,frame_idx (1 file/video)
 
 index_dir: "./index_data"
 
