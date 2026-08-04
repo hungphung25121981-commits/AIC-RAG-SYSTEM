@@ -42,9 +42,17 @@ for name, path in OPTIONAL_DIRS.items():
     status = "OK" if exists and n_items > 0 else "BỎ QUA (optional)"
     print(f"[{status}] {name:15s} = {path}  (số item bên trong: {n_items})")
 
-print()
 if all_ok:
-    print(">>> Tất cả path OK, có thể chạy build_dense_index.py tiếp.")
+    print(">>> Tất cả path OK, đang thử quét thật keyframe để xác nhận cấu trúc thư mục...")
+    try:
+        import utils
+        items = list(utils.iter_all_keyframes())
+        print(f">>> OK: quét được {len(items)} keyframe. Ví dụ ảnh đầu tiên:")
+        print("   ", items[0])
+        print(">>> Có thể chạy build_dense_index.py tiếp.")
+    except Exception as e:
+        all_ok = False
+        print(f">>> [LỖI] Quét keyframe thất bại: {e}")
 else:
     print(">>> CÓ PATH SAI/RỖNG -- DỪNG LẠI, ĐỪNG CHẠY JOB DÀI.")
     print("Cách sửa:")
@@ -53,4 +61,7 @@ else:
     print("  2. Nếu tên dataset không trùng tên thư mục chuẩn, set thủ công")
     print("     bằng biến môi trường trước khi import config, ví dụ:")
     print('       os.environ["AIC_KEYFRAMES_DIR"] = "/kaggle/input/ten-dataset-that/Keyframes"')
+    raise SystemExit(1)
+
+if not all_ok:
     raise SystemExit(1)
