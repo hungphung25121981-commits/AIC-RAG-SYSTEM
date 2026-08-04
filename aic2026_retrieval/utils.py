@@ -63,11 +63,31 @@ def _read_frame_index_metadata(video_kf_dir: str) -> dict:
     return {}
 
 
+def _find_video_dirs(keyframes_root: str) -> list:
+    """
+    Tìm mọi thư mục 'lá' chứa ảnh trực tiếp bên trong KEYFRAMES_DIR, bất kể
+    lồng bao nhiêu cấp thư mục (một số dataset Kaggle giữ nguyên cấu trúc zip
+    gốc, có thêm 1-2 cấp bọc ngoài trước khi tới thư mục video thật, ví dụ
+    KEYFRAMES_DIR/Keyframes/L21_V001/*.jpg thay vì KEYFRAMES_DIR/L21_V001/*.jpg).
+    Basename của thư mục lá được dùng làm video_id.
+    Trả về list (video_id, đường dẫn thư mục) đã sort theo video_id.
+    """
+    image_exts = (".jpg", ".jpeg", ".png")
+    found = {}
+    for root, _dirs, files in os.walk(keyframes_root):
+        has_image = any(f.lower().endswith(image_exts) for f in files)
+        if has_image:
+            video_id = os.path.basename(root.rstrip("/"))
+            found[video_id] = root
+    return sorted(found.items())
+
+
 def iter_all_keyframes() -> Iterator[KeyframeItem]:
     """
-    Duyệt toàn bộ Keyframes/<video_id>/*.jpg theo đúng thứ tự tăng dần,
-    sinh ra KeyframeItem cho từng ảnh. int_id sinh tuần tự -> dùng để
-    map ngược lại (video_id, frame_id) sau khi search FAISS.
+    Duyệt toàn bộ keyframe theo đúng thứ tự tăng dần, sinh ra KeyframeItem cho
+    từng ảnh. int_id sinh tuần tự -> dùng để map ngược lại (video_id, frame_id)
+    sau khi search FAISS. Tự tìm thư mục video ở bất kỳ độ sâu nào bên trong
+    config.KEYFRAMES_DIR (xem _find_video_dirs).
 
     Thứ tự ưu tiên xác định frame_id thật:
       1) map-keyframes/<video_id>.csv (n, pts_time, fps, frame_idx) -- ĐÚNG NHẤT,
@@ -78,12 +98,21 @@ def iter_all_keyframes() -> Iterator[KeyframeItem]:
          file thực sự là frame index -- kém tin cậy nhất, nên tránh).
     """
     int_id = 0
-    video_ids = sorted(os.listdir(config.KEYFRAMES_DIR))
-    for video_id in video_ids:
-        video_kf_dir = os.path.join(config.KEYFRAMES_DIR, video_id)
-        if not os.path.isdir(video_kf_dir):
-            continue
+    video_dirs = _find_video_dirs(config.KEYFRAMES_DIR)
 
+    if not video_dirs:
+        raise RuntimeError(
+            f"KHÔNG TÌM THẤY ẢNH KEYFRAME NÀO bên trong '{config.KEYFRAMES_DIR}'.\n"
+            f"Kiểm tra lại:\n"
+            f"  1) config đang trỏ đúng dataset chưa: chạy 'find {config.KEYFRAMES_DIR} "
+            f"-maxdepth 4 -type d | head -20' để xem cấu trúc thư mục thật.\n"
+            f"  2) Trên Kaggle, path chuẩn thường là /kaggle/input/<ten-dataset>/... "
+            f"(không có 'datasets/<username>/' ở giữa) -- chạy '!ls /kaggle/input/' "
+            f"để xem tên chính xác Kaggle đã mount."
+        )
+    print(f"[utils] Tìm thấy {len(video_dirs)} thư mục video trong {config.KEYFRAMES_DIR}")
+
+    for video_id, video_kf_dir in video_dirs:
         obj_dir = os.path.join(config.OBJECTS_DIR, video_id)
         filenames = sorted(
             f for f in os.listdir(video_kf_dir)
@@ -183,6 +212,26 @@ def read_jsonl(path: str) -> Iterator[dict]:
             line = line.strip()
             if line:
                 yield json.loads(line)
+
+
+def extract_feature_tensor(output):
+    """
+    Một số version transformers/SigLIP2 trả về tensor thẳng từ
+    get_text_features()/get_image_features(), số khác trả về object kiểu
+    ModelOutput (BaseModelOutputWithPooling...) bọc bên ngoài. Hàm này xử lý
+    cả 2 trường hợp để tránh lỗi 'object has no attribute norm'.
+    Thứ tự ưu tiên: pooler_output (đã xác nhận đúng cho SigLIP2 ở version hiện
+    tại) -> image_embeds/text_embeds (tên field tuỳ model) -> last_hidden_state
+    (fallback cuối, lấy token đầu).
+    """
+    import torch  # lazy-import: utils.py không nên bắt buộc phải có torch
+    if isinstance(output, torch.Tensor):
+        return output
+    for attr in ("pooler_output", "image_embeds", "text_embeds", "last_hidden_state"):
+        val = getattr(output, attr, None)
+        if val is not None:
+            return val[:, 0, :] if val.dim() == 3 else val
+    raise TypeError(f"Không rút được feature tensor từ output kiểu {type(output)}")
 
 
 # ---------------------------------------------------------------------
