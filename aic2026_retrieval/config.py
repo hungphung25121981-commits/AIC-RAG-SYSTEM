@@ -64,6 +64,14 @@ def _auto_find_dir(folder_name: str) -> str:
 
 
 def _resolve_dir(key: str, default_folder_name: str) -> str:
+    # 1) biến môi trường luôn ưu tiên cao nhất (vd AIC_KEYFRAMES_DIR),
+    #    kể cả khi YAML đã có giá trị cụ thể -- để có thể override nhanh
+    #    lúc debug mà không cần sửa file YAML.
+    env_var = f"AIC_{key.upper()}"
+    env_override = os.environ.get(env_var)
+    if env_override:
+        return env_override
+
     val = (_cfg.get("dataset") or {}).get(key)
     if val == "auto":
         return _auto_find_dir(default_folder_name)
