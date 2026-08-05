@@ -1,15 +1,17 @@
 """
 Sinh caption cho toàn bộ keyframe bằng InternVL2.5 (chạy offline, tốn thời gian nhất
-trong pipeline -- nên chạy song song nhiều process/GPU nếu có, chia theo video_id).
+trong pipeline). Đã tối ưu tốc độ 3 lớp:
+  1) BATCH inference (model.batch_chat) thay vì chat từng ảnh 1 -- đòn bẩy lớn nhất,
+     tận dụng đúng GPU thay vì để GPU rảnh giữa các lần gọi.
+  2) Quantize 4-bit (--quantize4bit) -- giảm VRAM, tăng tốc trên GPU nhỏ (T4).
+  3) Model nhẹ hơn (mặc định 2B qua config, đổi trong configs/*.yaml).
 
 Chạy:
-    python build_captions.py --shard 0 --num-shards 4    # chạy 4 tiến trình song song
+    python build_captions.py --shard 0 --num-shards 1 --dedup-map \
+        --batch-size 16 --quantize4bit --max-new-tokens 32
 
 Output:
     config.CAPTION_JSONL_PATH (append theo shard, mỗi dòng: {int_id, video_id, frame_id, caption})
-
-Lưu ý: script này cần config.ID_MAP_PATH đã được tạo bởi build_dense_index.py trước đó
-(dùng chung danh sách keyframe + int_id để đồng bộ giữa các nhánh index).
 """
 
 import argparse
@@ -45,16 +47,31 @@ def load_image_tensor(image_path, input_size=448):
     return transform(image).unsqueeze(0)
 
 
-def load_internvl():
+def load_internvl(quantize4bit: bool = False):
     from transformers import AutoModel, AutoTokenizer
 
     dtype = getattr(torch, config.DTYPE)
-    model = AutoModel.from_pretrained(
-        config.INTERNVL_MODEL_ID,
+    load_kwargs = dict(
         torch_dtype=dtype,
         low_cpu_mem_usage=True,
         trust_remote_code=True,
-    ).eval().to(config.DEVICE)
+    )
+
+    if quantize4bit:
+        from transformers import BitsAndBytesConfig
+        load_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=dtype,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+        print("[build_captions] Bật quantize 4-bit (bitsandbytes, nf4).")
+
+    model = AutoModel.from_pretrained(config.INTERNVL_MODEL_ID, **load_kwargs).eval()
+    if not quantize4bit:
+        # khi quantize, model đã tự được đặt lên device qua accelerate; không .to() thủ công nữa
+        model = model.to(config.DEVICE)
+
     tokenizer = AutoTokenizer.from_pretrained(
         config.INTERNVL_MODEL_ID, trust_remote_code=True, use_fast=False
     )
@@ -69,6 +86,41 @@ CAPTION_PROMPT = (
 )
 
 
+def caption_batch(model, tokenizer, items_batch, generation_config, dtype):
+    """
+    Caption 1 batch ảnh cùng lúc bằng model.batch_chat() (InternVL2/2.5 hỗ trợ sẵn),
+    nhanh hơn nhiều so với gọi model.chat() từng ảnh vì tận dụng đúng GPU batching.
+    Fallback về chat() từng ảnh nếu model không có batch_chat (một số bản cũ).
+    """
+    pixel_values_list = []
+    num_patches_list = []
+    for it in items_batch:
+        pv = load_image_tensor(it["keyframe_path"]).to(dtype).to(config.DEVICE)
+        pixel_values_list.append(pv)
+        num_patches_list.append(pv.shape[0])  # =1 vì dùng single-tile
+
+    pixel_values = torch.cat(pixel_values_list, dim=0)
+    questions = [CAPTION_PROMPT] * len(items_batch)
+
+    if hasattr(model, "batch_chat"):
+        responses = model.batch_chat(
+            tokenizer, pixel_values,
+            num_patches_list=num_patches_list,
+            questions=questions,
+            generation_config=generation_config,
+        )
+    else:
+        # fallback: model đời cũ không có batch_chat -- caption từng ảnh 1
+        responses = []
+        offset = 0
+        for n in num_patches_list:
+            pv = pixel_values[offset:offset + n]
+            responses.append(model.chat(tokenizer, pv, CAPTION_PROMPT, generation_config))
+            offset += n
+
+    return responses
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--shard", type=int, default=0)
@@ -76,8 +128,14 @@ def main():
     parser.add_argument("--dedup-map", action="store_true",
                          help="Chỉ caption các frame đại diện trong dedup_map.jsonl "
                               "(chạy dedup_keyframes.py trước). Giảm mạnh khối lượng caption.")
-    parser.add_argument("--max-new-tokens", type=int, default=48,
-                         help="Giảm xuống (vd 32-48) để tăng tốc, caption chỉ cần 1-2 câu ngắn.")
+    parser.add_argument("--max-new-tokens", type=int, default=32,
+                         help="Giảm xuống (vd 24-32) để tăng tốc, caption chỉ cần 1-2 câu ngắn.")
+    parser.add_argument("--batch-size", type=int, default=16,
+                         help="Số ảnh caption cùng lúc mỗi lần gọi model. Tăng nếu còn dư VRAM "
+                              "(quan sát !nvidia-smi), giảm nếu bị OOM.")
+    parser.add_argument("--quantize4bit", action="store_true",
+                         help="Load model ở dạng 4-bit (bitsandbytes) -- giảm VRAM, tăng tốc "
+                              "trên GPU nhỏ như T4. Cần: pip install bitsandbytes")
     args = parser.parse_args()
 
     items = list(utils.read_jsonl(config.ID_MAP_PATH))
@@ -101,26 +159,29 @@ def main():
         done_ids = {row["int_id"] for row in utils.read_jsonl(out_path)}
         print(f"Đã caption sẵn {len(done_ids)} ảnh, sẽ resume tiếp...")
 
-    print("Đang load InternVL2.5...")
-    model, tokenizer = load_internvl()
+    items = [it for it in items if it["int_id"] not in done_ids]
+    print(f"Còn lại cần caption: {len(items)} (batch_size={args.batch_size})")
+
+    print(f"Đang load {config.INTERNVL_MODEL_ID}...")
+    model, tokenizer = load_internvl(quantize4bit=args.quantize4bit)
+    dtype = getattr(torch, config.DTYPE)
     generation_config = dict(max_new_tokens=args.max_new_tokens, do_sample=False)
 
-    for it in tqdm(items, desc=f"Captioning (shard {args.shard})"):
-        if it["int_id"] in done_ids:
-            continue
+    for i in tqdm(range(0, len(items), args.batch_size), desc=f"Captioning (shard {args.shard})"):
+        batch = items[i:i + args.batch_size]
         try:
-            pixel_values = load_image_tensor(it["keyframe_path"]).to(getattr(torch, config.DTYPE)).to(config.DEVICE)
-            caption = model.chat(tokenizer, pixel_values, CAPTION_PROMPT, generation_config)
+            captions = caption_batch(model, tokenizer, batch, generation_config, dtype)
         except Exception as e:
-            print(f"[WARN] Lỗi caption {it['keyframe_path']}: {e}")
-            caption = ""
+            print(f"[WARN] Lỗi batch tại index {i}: {e} -- fallback caption rỗng cho batch này")
+            captions = [""] * len(batch)
 
-        utils.append_jsonl(out_path, {
-            "int_id": it["int_id"],
-            "video_id": it["video_id"],
-            "frame_id": it["frame_id"],
-            "caption": caption,
-        })
+        for it, caption in zip(batch, captions):
+            utils.append_jsonl(out_path, {
+                "int_id": it["int_id"],
+                "video_id": it["video_id"],
+                "frame_id": it["frame_id"],
+                "caption": caption,
+            })
 
     print(f"Hoàn tất shard {args.shard} -> {out_path}")
     print("Sau khi tất cả shard chạy xong, merge bằng: "
