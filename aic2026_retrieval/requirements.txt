@@ -13,3 +13,4 @@ tqdm
 einops
 timm
 pyyaml
+bitsandbytes
