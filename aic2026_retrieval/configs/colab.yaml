@@ -16,7 +16,7 @@ index_dir: "/content/index_data"   # để ở local disk Colab cho nhanh, khôn
 
 models:
   siglip2: "google/siglip2-so400m-patch14-384"
-  internvl: "OpenGVLab/InternVL2_5-8B"
+  internvl: "OpenGVLab/InternVL2_5-2B"
   translate: "Helsinki-NLP/opus-mt-vi-en"
 
 device: "cuda"
