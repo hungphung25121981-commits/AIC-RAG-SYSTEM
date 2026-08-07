@@ -78,7 +78,7 @@ def collate_fn(batch):
 
 def load_internvl(quantize4bit: bool = False):
     from transformers import AutoModel, AutoTokenizer
-
+    model_id = model_path or getattr(config, "INTERNVL_MODEL_ID", "OpenGVLab/InternVL2_5-2B")
     dtype = getattr(torch, config.DTYPE)
     load_kwargs = dict(
         torch_dtype=dtype,
@@ -146,6 +146,8 @@ def main():
     parser.add_argument("--max-new-tokens", type=int, default=32)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--quantize4bit", action="store_true")
+    parser.add_argument("--model-path", type=str, default="OpenGVLab/InternVL2_5-2B", 
+                        help="Path local hoặc HuggingFace ID cho InternVL")
     args = parser.parse_args()
 
     items = list(utils.read_jsonl(config.ID_MAP_PATH))
@@ -172,7 +174,7 @@ def main():
         return
 
     print(f"Đang load {config.INTERNVL_MODEL_ID}...")
-    model, tokenizer = load_internvl(quantize4bit=args.quantize4bit)
+    model, tokenizer = load_internvl(model_path=args.model_path, quantize4bit=args.quantize4bit)
     dtype = getattr(torch, config.DTYPE)
     generation_config = dict(max_new_tokens=args.max_new_tokens, do_sample=False)
 
