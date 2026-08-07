@@ -107,7 +107,13 @@ BM25_PICKLE_PATH   = os.path.join(INDEX_DIR, "bm25.pkl")
 # ----------------------------------------------------------------------
 _models = _cfg.get("models") or {}
 SIGLIP2_MODEL_ID   = _models.get("siglip2", "google/siglip2-so400m-patch14-384")
-INTERNVL_MODEL_ID   = _models.get("internvl", "OpenGVLab/InternVL2_5-8B")
+_internvl_raw = _models.get("internvl", "OpenGVLab/InternVL2_5-8B")
+if _internvl_raw.startswith("aic2026_retrieval/") or _internvl_raw.startswith("./"):
+    # Resolve relative path theo vị trí file config.py, không phụ thuộc cwd lúc chạy lệnh
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    INTERNVL_MODEL_ID = os.path.join(_repo_root, _internvl_raw)
+else:
+    INTERNVL_MODEL_ID = _internvl_raw
 TRANSLATE_MODEL_ID   = _models.get("translate", "Helsinki-NLP/opus-mt-vi-en")
 
 DEVICE = _cfg.get("device", "cuda")
