@@ -1,5 +1,6 @@
 """
 Sinh caption cho toàn bộ keyframe bằng InternVL2.5 (đã tối ưu DataLoader & Batching).
+vd: python build_captions.py --model-path "OpenGVLab/InternVL2_5-2B" --batch-size 64 --quantize4bit --max_tokens 32
 """
 
 import argparse
