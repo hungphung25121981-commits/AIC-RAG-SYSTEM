@@ -17,7 +17,7 @@ index_dir: "./index_data"
 
 models:
   siglip2: "google/siglip2-so400m-patch14-384"
-  internvl: "OpenGVLab/InternVL2_5-B"
+  internvl: "aic2026_retrieval/internvl2_5_local"
   translate: "Helsinki-NLP/opus-mt-vi-en"
 
 device: "cuda"     # "cuda" | "cpu"
