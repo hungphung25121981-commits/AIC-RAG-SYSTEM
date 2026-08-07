@@ -27,6 +27,29 @@ def build_transform(input_size=448):
     ])
 
 
+# ==============================================================================
+# HÀM MỚI THÊM: load_image_tensor
+# ==============================================================================
+def load_image_tensor(image_path, input_size=448, device=None):
+    """
+    Load một ảnh từ path và chuyển đổi thành Tensor để đưa vào model VLM/CLIP.
+    """
+    if device is None:
+        device = getattr(config, "DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+        
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Không tìm thấy file ảnh tại: {image_path}")
+
+    image = Image.open(image_path).convert("RGB")
+    transform = build_transform(input_size)
+    tensor = transform(image).unsqueeze(0).to(device)
+    
+    # Chuyển kiểu dữ liệu sang DTYPE trong config (FLOAT16 hoặc BFLOAT16 nếu có)
+    dtype_str = getattr(config, "DTYPE", "float32")
+    dtype = getattr(torch, dtype_str, torch.float32)
+    return tensor.to(dtype)
+
+
 class KeyframeDataset(Dataset):
     """Dataset load ảnh đa luồng bằng PyTorch DataLoader"""
     def __init__(self, items):
