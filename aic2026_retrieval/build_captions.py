@@ -84,6 +84,7 @@ def load_internvl(quantize4bit: bool = False):
         torch_dtype=dtype,
         low_cpu_mem_usage=False,
         trust_remote_code=True,
+        _fast_init=False,
     )
 
     if quantize4bit:
