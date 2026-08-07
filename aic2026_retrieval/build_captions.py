@@ -82,7 +82,7 @@ def load_internvl(quantize4bit: bool = False):
     dtype = getattr(torch, config.DTYPE)
     load_kwargs = dict(
         torch_dtype=dtype,
-        low_cpu_mem_usage=True,
+        low_cpu_mem_usage=False,
         trust_remote_code=True,
     )
 
