@@ -20,7 +20,7 @@ class DenseSearcher:
         import faiss
         from transformers import AutoModel, AutoProcessor
 
-        self.device = config.DEVICE  # Khởi tạo self.device ở đây
+        self.device = config.DEVICE
 
         print("[DenseSearcher] Loading FAISS index...")
         self.index = faiss.read_index(config.FAISS_INDEX_PATH)
@@ -36,19 +36,14 @@ class DenseSearcher:
     @torch.no_grad()
     def encode_query(self, query_en: str) -> np.ndarray:
         inputs = self.processor(text=[query_en], return_tensors="pt", padding=True).to(self.device)
-        inputs = {k: v.to(getattr(torch, config.DTYPE)) if v.dtype == torch.float32 else v 
-                  for k, v in inputs.items()}
+        dtype = getattr(torch, config.DTYPE)
+        inputs = {k: v.to(dtype) if v.dtype == torch.float32 else v for k, v in inputs.items()}
         
-        # Lấy output từ model
+        # Lấy text features từ SigLIP2
         outputs = self.model.get_text_features(**inputs)
         
-        # Trích xuất PyTorch Tensor thực sự từ Output Object
-        if hasattr(outputs, "text_embeds") and outputs.text_embeds is not None:
-            feats = outputs.text_embeds
-        elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-            feats = outputs.pooler_output
-        else:
-            feats = outputs
+        # Trích xuất PyTorch Tensor thực sự thông qua helper utils
+        feats = utils.extract_feature_tensor(outputs)
 
         # Normalize L2
         feats = feats / feats.norm(dim=-1, keepdim=True)
@@ -101,7 +96,7 @@ def rrf_fusion(rank_lists: List[List[int]], k: int = None) -> List[Tuple[int, fl
 
 
 def hybrid_search(query_vi: str, query_en: str, dense: DenseSearcher, bm25: BM25Searcher,
-                  top_k: int = None) -> List[Tuple[int, float]]:
+                 top_k: int = None) -> List[Tuple[int, float]]:
     """
     Pipeline đầy đủ 1 query: search 2 nhánh -> RRF fusion.
     query_vi: dùng cho BM25 (đã tokenize tiếng Việt).
