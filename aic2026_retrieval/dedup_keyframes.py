@@ -22,6 +22,7 @@ from collections import defaultdict
 
 import numpy as np
 import faiss
+from tqdm import tqdm
 
 import config
 import utils
@@ -37,11 +38,15 @@ def main():
     print("Đang load FAISS index + id_map...")
     index = faiss.read_index(config.FAISS_INDEX_PATH)
     id_map = list(utils.read_jsonl(config.ID_MAP_PATH))
+    
     assert index.ntotal == len(id_map), \
         "FAISS và id_map lệch số lượng -- chạy debug_pipeline.py trước để kiểm tra alignment!"
 
-    # nhóm theo video_id, giữ nguyên thứ tự int_id (vì iter_all_keyframes() duyệt
-    # tuần tự theo từng thư mục video, các frame cùng video luôn liền kề nhau)
+    print("Đang trích xuất toàn bộ embeddings từ FAISS index...")
+    # Nạp toàn bộ ma trận embedding từ FAISS vào bộ nhớ RAM 1 lần duy nhất để tăng tốc
+    all_embeddings = index.reconstruct_n(0, index.ntotal)
+
+    # Nhóm theo video_id, giữ nguyên thứ tự int_id
     by_video = defaultdict(list)
     for row in id_map:
         by_video[row["video_id"]].append(row)
@@ -50,13 +55,16 @@ def main():
     total_frames = 0
     total_representatives = 0
 
-    for video_id, rows in by_video.items():
+    print("Đang tiến hành khử trùng lặp (Dedup) theo từng video...")
+    for video_id, rows in tqdm(by_video.items(), desc="Deduping videos"):
         rows = sorted(rows, key=lambda r: r["int_id"])
         rep_int_id = None
         rep_emb = None
 
         for row in rows:
-            emb = index.reconstruct(row["int_id"]).reshape(1, -1)  # đã normalize sẵn lúc build
+            int_id = row["int_id"]
+            # Lấy vector tương ứng từ ma trận đã load sẵn
+            emb = all_embeddings[int_id].reshape(1, -1)
             emb = emb / (np.linalg.norm(emb) + 1e-8)
 
             if rep_emb is None:
@@ -66,12 +74,12 @@ def main():
                 is_new_rep = sim < args.threshold
 
             if is_new_rep:
-                rep_int_id = row["int_id"]
+                rep_int_id = int_id
                 rep_emb = emb
                 total_representatives += 1
 
             dedup_rows.append({
-                "int_id": row["int_id"],
+                "int_id": int_id,
                 "representative_int_id": rep_int_id,
                 "video_id": video_id,
                 "frame_id": row["frame_id"],
@@ -82,10 +90,12 @@ def main():
     utils.write_jsonl(out_path, iter(dedup_rows))
 
     reduction = 100 * (1 - total_representatives / total_frames)
-    print(f"\nTổng số keyframe        : {total_frames}")
+    print(f"\n" + "=" * 50)
+    print(f"Tổng số keyframe         : {total_frames}")
     print(f"Số đại diện cần caption  : {total_representatives}")
-    print(f"Giảm được               : {reduction:.1f}%")
+    print(f"Giảm được                : {reduction:.1f}%")
     print(f"Đã lưu -> {out_path}")
+    print("=" * 50)
     print("\nBước tiếp theo: chạy build_captions.py --dedup-map để chỉ caption phần đại diện.")
 
 
