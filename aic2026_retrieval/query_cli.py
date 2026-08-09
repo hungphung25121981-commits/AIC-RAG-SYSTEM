@@ -5,16 +5,17 @@ CLI chạy 1 query end-to-end: Dense (SigLIP2) + BM25 -> RRF -> (tuỳ chọn) V
 Chạy:
     python query_cli.py --query "Tìm cảnh một diễn giả mặc áo đỏ phát biểu ngoài trời" --rerank
 
-    # không rerank (nhanh hơn, dùng lúc cần tốc độ / thử nghiệm):
+    # Không rerank (nhanh hơn, dùng lúc cần tốc độ / thử nghiệm):
     python query_cli.py --query "..." --top-k 100
 """
 
 import argparse
 import csv
+import os
+import torch
 
 import config
 import search
-import translate
 import utils
 
 
@@ -31,7 +32,13 @@ def main():
     bm25_searcher = search.BM25Searcher()
 
     print("Đang dịch query VI->EN cho nhánh Dense...")
-    query_en = translate.translate_vi2en(args.query)
+    try:
+        import translate
+        query_en = translate.translate_vi2en(args.query)
+    except Exception as e:
+        print(f"[WARN] Lỗi dịch tự động ({e}), dùng câu gốc cho Dense search.")
+        query_en = args.query
+
     print(f"  VI: {args.query}")
     print(f"  EN: {query_en}")
 
@@ -41,11 +48,16 @@ def main():
     id_map_by_int_id = {row["int_id"]: row for row in id_map_rows}
 
     if args.rerank:
+        print("Đang giải phóng bộ nhớ GPU trước khi chạy VLM Rerank...")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         print("Đang chạy VLM rerank tầng cuối (InternVL2.5)...")
         import vlm_rerank
         reranker = vlm_rerank.VLMReranker()
         final_results = reranker.rerank(fused, args.query, id_map_by_int_id, top_k=config.RERANK_TOPK)
-        # phần còn lại (sau rerank_topk) giữ nguyên thứ tự RRF, nối vào cuối
+        
+        # Phần còn lại (sau rerank_topk) giữ nguyên thứ tự RRF, nối vào cuối
         reranked_ids = {i for i, _ in final_results}
         remaining = [(i, s) for i, s in fused if i not in reranked_ids]
         final_results = final_results + remaining
@@ -60,6 +72,10 @@ def main():
         rows_out.append({"rank": rank, "video_id": row["video_id"], "frame_id": row["frame_id"], "score": score})
 
     if args.out_csv:
+        out_dir = os.path.dirname(args.out_csv)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+            
         with open(args.out_csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=["rank", "video_id", "frame_id", "score"])
             writer.writeheader()
