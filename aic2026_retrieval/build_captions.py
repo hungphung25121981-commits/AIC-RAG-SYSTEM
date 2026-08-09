@@ -1,6 +1,6 @@
 """
 Sinh caption cho toàn bộ keyframe bằng InternVL2.5 (đã tối ưu DataLoader & Batching).
-vd: python build_captions.py --model-path "OpenGVLab/InternVL2_5-2B" --batch-size 64 --quantize4bit --max_tokens 32
+vd: python build_captions.py --model-path "OpenGVLab/InternVL2_5-2B" --batch-size 64 --quantize4bit --max-new-tokens 32
 """
 
 import argparse
@@ -28,13 +28,8 @@ def build_transform(input_size=448):
     ])
 
 
-# ==============================================================================
-# HÀM MỚI THÊM: load_image_tensor
-# ==============================================================================
 def load_image_tensor(image_path, input_size=448, device=None):
-    """
-    Load một ảnh từ path và chuyển đổi thành Tensor để đưa vào model VLM/CLIP.
-    """
+    """Load một ảnh từ path và chuyển đổi thành Tensor để đưa vào model VLM/CLIP."""
     if device is None:
         device = getattr(config, "DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
         
@@ -45,7 +40,6 @@ def load_image_tensor(image_path, input_size=448, device=None):
     transform = build_transform(input_size)
     tensor = transform(image).unsqueeze(0).to(device)
     
-    # Chuyển kiểu dữ liệu sang DTYPE trong config (FLOAT16 hoặc BFLOAT16 nếu có)
     dtype_str = getattr(config, "DTYPE", "float32")
     dtype = getattr(torch, dtype_str, torch.float32)
     return tensor.to(dtype)
@@ -66,7 +60,6 @@ class KeyframeDataset(Dataset):
             image = Image.open(item["keyframe_path"]).convert("RGB")
             tensor = self.transform(image)
         except Exception as e:
-            # Ảnh lỗi -> tạo tensor rỗng
             tensor = torch.zeros((3, 448, 448))
         return item, tensor
 
@@ -77,8 +70,11 @@ def collate_fn(batch):
     return items, pixel_values
 
 
-def load_internvl(quantize4bit: bool = False):
+# === FIX LỖI 1: Thêm model_path vào tham số đầu vào của hàm ===
+def load_internvl(model_path: str = None, quantize4bit: bool = False):
     from transformers import AutoModel, AutoTokenizer
+    
+    # Ưu tiên model_path truyền từ CLI, nếu không dùng từ config
     model_id = model_path or getattr(config, "INTERNVL_MODEL_ID", "OpenGVLab/InternVL2_5-2B")
     dtype = getattr(torch, config.DTYPE)
     load_kwargs = dict(
@@ -98,12 +94,13 @@ def load_internvl(quantize4bit: bool = False):
         )
         print("[build_captions] Bật quantize 4-bit (bitsandbytes, nf4).")
 
-    model = AutoModel.from_pretrained(config.INTERNVL_MODEL_ID, **load_kwargs).eval()
+    # === FIX LỖI 2: Dùng model_id đã được tính toán thay vì config cố định ===
+    model = AutoModel.from_pretrained(model_id, **load_kwargs).eval()
     if not quantize4bit:
         model = model.to(config.DEVICE)
 
     tokenizer = AutoTokenizer.from_pretrained(
-        config.INTERNVL_MODEL_ID, trust_remote_code=True, use_fast=False
+        model_id, trust_remote_code=True, use_fast=False
     )
     return model, tokenizer
 
@@ -129,7 +126,6 @@ def caption_batch(model, tokenizer, pixel_values, batch_size, generation_config)
             generation_config=generation_config,
         )
     else:
-        # Warning nếu bị fallback
         print("\n[WARN] Model không hỗ trợ batch_chat! Đang fallback về chat từng ảnh...")
         responses = []
         for i in range(batch_size):
@@ -147,7 +143,7 @@ def main():
     parser.add_argument("--max-new-tokens", type=int, default=32)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--quantize4bit", action="store_true")
-    parser.add_argument("--model-path", type=str, default="OpenGVLab/InternVL2_5-2B", 
+    parser.add_argument("--model-path", type=str, default=None, 
                         help="Path local hoặc HuggingFace ID cho InternVL")
     args = parser.parse_args()
 
@@ -174,19 +170,21 @@ def main():
         print("Đã hoàn tất toàn bộ!")
         return
 
-    print(f"Đang load {config.INTERNVL_MODEL_ID}...")
+    # In log rõ ràng nguồn model load từ đâu
+    target_model_path = args.model_path or getattr(config, "INTERNVL_MODEL_ID", "OpenGVLab/InternVL2_5-2B")
+    print(f"Đang load model từ: {target_model_path}...")
+    
     model, tokenizer = load_internvl(model_path=args.model_path, quantize4bit=args.quantize4bit)
     dtype = getattr(torch, config.DTYPE)
     generation_config = dict(max_new_tokens=args.max_new_tokens, do_sample=False)
 
-    # Đưa danh sách items vào PyTorch DataLoader đa luồng
     dataset = KeyframeDataset(items)
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=4,       # Load 4 ảnh song song bằng CPU
-        pin_memory=True,     # Tăng tốc truyền tensor lên GPU
+        num_workers=4,
+        pin_memory=True,
         collate_fn=collate_fn
     )
 
@@ -200,7 +198,6 @@ def main():
             print(f"\n[WARN] Lỗi batch: {e} -- Fallback rỗng")
             captions = [""] * len(batch_items)
 
-        # Ghi đĩa nguyên batch
         records = [
             {
                 "int_id": it["int_id"],
@@ -211,12 +208,15 @@ def main():
             for it, cap in zip(batch_items, captions)
         ]
         
-        # Mở file ghi 1 lần cho cả batch
         with open(out_path, "a", encoding="utf-8") as f:
             for r in records:
                 f.write(utils.json_dumps(r) + "\n")
 
     print(f"Hoàn tất shard {args.shard} -> {out_path}")
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
