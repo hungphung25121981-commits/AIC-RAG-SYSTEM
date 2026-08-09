@@ -10,13 +10,45 @@ Output:
 """
 
 import argparse
+import os
+import faiss
 import numpy as np
 import torch
 from PIL import Image
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 import config
 import utils
+
+
+class ImageDataset(Dataset):
+    """Dataset load ảnh đa luồng bằng CPU trước khi chuyển sang GPU."""
+    def __init__(self, items, processor):
+        self.items = items
+        self.processor = processor
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, idx):
+        item = self.items[idx]
+        p = item.keyframe_path
+        try:
+            img = Image.open(p).convert("RGB")
+        except Exception as e:
+            print(f"\n[WARN] Không mở được ảnh {p}: {e}")
+            img = Image.new("RGB", (384, 384))  # Ảnh placeholder tránh lệch index
+
+        return img
+
+
+def collate_fn_factory(processor):
+    def collate_fn(batch_imgs):
+        # Batching ảnh bằng processor của SigLIP2
+        inputs = processor(images=batch_imgs, return_tensors="pt")
+        return inputs
+    return collate_fn
 
 
 def load_siglip2():
@@ -29,30 +61,32 @@ def load_siglip2():
 
 
 @torch.no_grad()
-def encode_images(model, processor, image_paths, batch_size, device):
+def encode_images(model, processor, items, batch_size, device):
     """Encode danh sách ảnh -> ma trận embedding đã L2-normalize (numpy float32)."""
-    all_embs = []
-    for i in tqdm(range(0, len(image_paths), batch_size), desc="Encoding keyframes (SigLIP2)"):
-        batch_paths = image_paths[i:i + batch_size]
-        imgs = []
-        for p in batch_paths:
-            try:
-                imgs.append(Image.open(p).convert("RGB"))
-            except Exception as e:
-                print(f"[WARN] Không mở được ảnh {p}: {e}")
-                imgs.append(Image.new("RGB", (384, 384)))  # ảnh trắng placeholder, tránh lệch index
+    dataset = ImageDataset(items, processor)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4,        # Đọc 4 ảnh song song bằng CPU
+        pin_memory=True,      # Tăng tốc độ nạp dữ liệu lên GPU
+        collate_fn=collate_fn_factory(processor)
+    )
 
-        inputs = processor(images=imgs, return_tensors="pt").to(device)
-        inputs = {k: v.to(getattr(torch, config.DTYPE)) if v.dtype == torch.float32 else v
+    all_embs = []
+    dtype = getattr(torch, config.DTYPE)
+
+    for inputs in tqdm(dataloader, desc="Encoding keyframes (SigLIP2)"):
+        # Đưa tensor inputs sang GPU với dtype phù hợp
+        inputs = {k: v.to(device=device, dtype=dtype) if v.dtype.is_floating_point else v.to(device) 
                   for k, v in inputs.items()}
 
         outputs = model.get_image_features(**inputs)
-        # SigLIP2 tuỳ version transformers trả về tensor thẳng hoặc object
-        # ModelOutput (pooler_output/image_embeds/...) -- xử lý chung ở utils.py
         feats = utils.extract_feature_tensor(outputs)
         feats = feats / feats.norm(dim=-1, keepdim=True)
 
         all_embs.append(feats.float().cpu().numpy())
+
     return np.concatenate(all_embs, axis=0)
 
 
@@ -77,13 +111,11 @@ def main():
     print("Đang load model SigLIP2...")
     model, processor = load_siglip2()
 
-    image_paths = [it.keyframe_path for it in items]
-    embeddings = encode_images(model, processor, image_paths, args.batch_size, config.DEVICE)
+    embeddings = encode_images(model, processor, items, args.batch_size, config.DEVICE)
 
     assert embeddings.shape[0] == len(items), "Số embedding không khớp số keyframe!"
 
     print("Đang build FAISS index (IndexFlatIP)...")
-    import faiss
     dim = embeddings.shape[1]
     index = faiss.IndexFlatIP(dim)
     index.add(embeddings.astype(np.float32))
