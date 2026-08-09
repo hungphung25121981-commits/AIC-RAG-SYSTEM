@@ -15,17 +15,17 @@ Sẽ in ra:
 
 import argparse
 import pickle
+import os
 
 import config
 import search
-import translate
 import utils
 
 
 def check_alignment():
-    print("=" * 60)
+    print("=" * 65)
     print("BƯỚC 1: KIỂM TRA ALIGNMENT GIỮA CÁC INDEX")
-    print("=" * 60)
+    print("=" * 65)
 
     import faiss
     faiss_index = faiss.read_index(config.FAISS_INDEX_PATH)
@@ -35,7 +35,7 @@ def check_alignment():
         bm25_data = pickle.load(f)
     bm25_ids = bm25_data["int_ids_order"]
 
-    print(f"FAISS ntotal        : {faiss_index.ntotal}")
+    print(f"FAISS ntotal         : {faiss_index.ntotal}")
     print(f"id_map.jsonl rows    : {len(id_map)}")
     print(f"BM25 int_ids_order   : {len(bm25_ids)}")
 
@@ -53,7 +53,7 @@ def check_alignment():
             "Build lại build_bm25_index.py."
         )
 
-    # kiểm tra int_id có liên tục 0..N-1 và không trùng lặp không
+    # Kiểm tra int_id có liên tục 0..N-1 và không trùng lặp không
     int_ids = sorted(row["int_id"] for row in id_map)
     expected = list(range(len(id_map)))
     if int_ids != expected:
@@ -62,7 +62,6 @@ def check_alignment():
             "-> có id bị trùng hoặc bị nhảy số, sẽ làm map ngược sai video."
         )
 
-    # spot-check vài dòng đầu/cuối để xem frame_id có "nhìn hợp lý" không
     print("\n3 dòng đầu id_map (kiểm tra thủ công video_id/frame_id có hợp lý không):")
     for row in id_map[:3]:
         print(" ", row)
@@ -71,7 +70,7 @@ def check_alignment():
         print(" ", row)
 
     if problems:
-        print("\n>>> PHÁT HIỆN VẤN ĐỀ:")
+        print("\n>>> PHÁT HIỆN VẤN ĐỀ VỀ ALIGNMENT:")
         for p in problems:
             print(" -", p)
     else:
@@ -81,22 +80,31 @@ def check_alignment():
 
 
 def isolate_branches(query_vi, id_map, expected_video=None):
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 65)
     print("BƯỚC 2: TÁCH RIÊNG TỪNG NHÁNH ĐỂ CÔ LẬP LỖI")
-    print("=" * 60)
+    print("=" * 65)
 
     id_map_by_int_id = {row["int_id"]: row for row in id_map}
 
     dense = search.DenseSearcher()
     bm25 = search.BM25Searcher()
 
-    query_en = translate.translate_vi2en(query_vi)
+    # Dịch query an toàn
+    try:
+        import translate
+        query_en = translate.translate_vi2en(query_vi)
+    except Exception as e:
+        print(f"[WARN] Không thể dịch tự động ({e}), dùng query gốc cho Dense.")
+        query_en = query_vi
+
     print(f"\nQuery VI : {query_vi}")
     print(f"Query EN (dùng cho Dense): {query_en}")
     print("  -> Nếu bản dịch này SAI NGHĨA so với câu gốc, nhánh Dense sẽ tìm nhầm hướng.")
 
-    dense_results = dense.search(query_en, top_k=20)
-    bm25_results = bm25.search(query_vi, top_k=20)
+    # Tìm kiếm với Top-100 để không bỏ sót expected_video ở rank thấp
+    search_topk = 100
+    dense_results = dense.search(query_en, top_k=search_topk)
+    bm25_results = bm25.search(query_vi, top_k=search_topk)
 
     print("\n--- TOP-10 NHÁNH DENSE (SigLIP2) ---")
     for rank, (int_id, score) in enumerate(dense_results[:10], start=1):
@@ -120,24 +128,25 @@ def isolate_branches(query_vi, id_map, expected_video=None):
         print(f"{rank:2d}. {row['video_id']:15s} frame_id={row['frame_id']:<8d} rrf_score={score:.5f}{flag}")
 
     if expected_video:
-        print(f"\n--- Kiểm tra riêng video kỳ vọng: {expected_video} ---")
-        for name, results in [("Dense", dense_results), ("BM25", bm25_results)]:
+        print(f"\n--- Kiểm tra vị trí của video kỳ vọng ({expected_video}) trong Top-{search_topk} ---")
+        for name, results in [("Dense", dense_results), ("BM25", bm25_results), ("RRF Fusion", fused)]:
             found_rank = next(
-                (r for r, (i, _) in enumerate(results, start=1) if id_map_by_int_id[i]["video_id"] == expected_video),
+                (r for r, item in enumerate(results, start=1) 
+                 if id_map_by_int_id[item[0] if isinstance(item, tuple) else item]["video_id"] == expected_video),
                 None,
             )
             if found_rank:
-                print(f"  [{name}] tìm thấy ở rank {found_rank}/{len(results)}")
+                print(f"  [{name:10s}] tìm thấy ở rank {found_rank}/{len(results)}")
             else:
-                print(f"  [{name}] KHÔNG xuất hiện trong top-{len(results)} "
-                      f"-> nhánh này không nhận diện được đúng nội dung, không phải lỗi fusion.")
+                print(f"  [{name:10s}] KHÔNG xuất hiện trong top-{search_topk} "
+                      f"-> nhánh này hoàn toàn bỏ sót hoặc score quá thấp.")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--query", type=str, required=True)
+    parser.add_argument("--query", type=str, required=True, help="Câu truy vấn cần debug")
     parser.add_argument("--expected-video", type=str, default=None,
-                         help="video_id đáp án đúng (nếu biết), để kiểm tra rank cụ thể")
+                        help="video_id đáp án đúng (nếu biết), để kiểm tra rank cụ thể")
     args = parser.parse_args()
 
     id_map = check_alignment()
@@ -146,3 +155,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
