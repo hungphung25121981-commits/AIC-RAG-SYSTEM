@@ -6,12 +6,12 @@
 
 dataset:
   # "auto" -> tự quét /kaggle/input/*/<TênThưMục> (mỗi cái là 1 dataset đã Add Data)
-  videos_dir:       "/kaggle/input/datasets/hpfluk/video-aic-v1"
-  keyframes_dir:      "/kaggle/input/datasets/doanminhtuan/dataset-ai-challenge-keyframe"
-  objects_dir:        "/kaggle/input/datasets/doanminhtuan/objects-aic25-b1-zip/objects"
-  clipfeat_dir:        "/kaggle/input/datasets/doanminhtuan/clip-features-32-aic25-b1/clip-features-32"
-  metadata_dir:        "/kaggle/input/datasets/doanminhtuan/media-info-aic25-b1/media-info"
-  mapkeyframes_dir:    " /kaggle/input/datasets/doanminhtuan/map-keyframes-aic25-b1/map-keyframes" # thường tên dataset dạng "map-keyframes-aic..."
+  videos_dir:       "auto"
+  keyframes_dir:      "auto"
+  objects_dir:        "auto"
+  clipfeat_dir:        "auto"
+  metadata_dir:        "auto"
+  mapkeyframes_dir:    "auto"
 
 index_dir: "/kaggle/working/index_data"
 
