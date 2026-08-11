@@ -2,21 +2,41 @@ import os
 import zipfile
 import urllib.request
 
-# Đường dẫn đính kèm trên GitHub Release của bạn
-RELEASE_URL = "https://github.com/USERNAME/AIC-RAG-SYSTEM/releases/download/v1.0/internvl2_5_local.zip"
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOCAL_DIR = os.path.join(BASE_DIR, "aic2026_retrieval", "internvl2_5_local")
-ZIP_PATH = os.path.join(BASE_DIR, "weights.zip")
+LOCAL_DIR = os.path.join(BASE_DIR, "internvl2_5_local")
 
-if not os.path.exists(LOCAL_DIR):
+# Thay link Release của bạn vào đây
+URL_PART1 = "https://github.com/USER/REPO/releases/download/v1.0/intern.zip.001"
+URL_PART2 = "https://github.com/USER/REPO/releases/download/v1.0/intern.zip.002"
+
+def download_and_extract_custom_weights():
+    if os.path.exists(LOCAL_DIR) and os.listdir(LOCAL_DIR):
+        print(f"[INFO] Thư mục weights đã tồn tại tại {LOCAL_DIR}, bỏ qua bước tải.")
+        return
+
     os.makedirs(LOCAL_DIR, exist_ok=True)
-    print(f"==> Đang tải weights từ GitHub ")
-    urllib.request.urlretrieve(RELEASE_URL, ZIP_PATH)
     
-    print("==> Giải nén weights...")
-    with zipfile.ZipFile(ZIP_PATH, 'r') as zip_ref:
+    p1_path = os.path.join(BASE_DIR, "part1.tmp")
+    p2_path = os.path.join(BASE_DIR, "part2.tmp")
+    full_zip_path = os.path.join(BASE_DIR, "intern_custom.zip")
+
+    print("==> 1. Đang tải các phần weights custom từ GitHub Release...")
+    urllib.request.urlretrieve(URL_PART1, p1_path)
+    urllib.request.urlretrieve(URL_PART2, p2_path)
+
+    print("==> 2. Đang nối các file...")
+    with open(full_zip_path, "wb") as outfile:
+        for p in [p1_path, p2_path]:
+            with open(p, "rb") as infile:
+                outfile.write(infile.read())
+            os.remove(p)
+
+    print("==> 3. Đang giải nén bộ weights custom...")
+    with zipfile.ZipFile(full_zip_path, "r") as zip_ref:
         zip_ref.extractall(LOCAL_DIR)
-        
-    os.remove(ZIP_PATH) # Xóa file zip sau khi giải nén
-    print("==> Tải và giải nén weights từ GitHub hoàn tất!")
+
+    os.remove(full_zip_path)
+    print(f"==> HOÀN TẤT! Weights custom đã được giải nén vào {LOCAL_DIR}")
+
+if __name__ == "__main__":
+    download_and_extract_custom_weights()
