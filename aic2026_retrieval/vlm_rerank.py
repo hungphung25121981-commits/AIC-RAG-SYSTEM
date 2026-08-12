@@ -6,12 +6,19 @@ Bước này xử lý tốt các query composite (nhiều điều kiện cùng l
 bối cảnh + hành động...) mà similarity vector đơn thuần dễ bỏ sót.
 """
 
+import os
 import re
 import torch
 from typing import List, Tuple
 
 import config
 from build_captions import load_image_tensor, load_internvl  # tái dùng preprocessing + loader
+
+# Tự động tải weights nếu thiếu
+try:
+    from download_weights import download_and_extract_custom_weights
+except ImportError:
+    download_and_extract_custom_weights = None
 
 
 RERANK_PROMPT_TEMPLATE = (
@@ -25,6 +32,15 @@ RERANK_PROMPT_TEMPLATE = (
 
 class VLMReranker:
     def __init__(self):
+        # 1. Kiểm tra nếu chưa có weights thì tự động tải
+        model_path = os.path.abspath(config.INTERNVL_MODEL_PATH)
+        if not os.path.exists(model_path) or not os.listdir(model_path):
+            print(f"[WARN] Chưa tìm thấy Local Weights tại: {model_path}")
+            if download_and_extract_custom_weights:
+                print("[INFO] Kích hoạt tự động tải Weights...")
+                download_and_extract_custom_weights()
+
+        # 2. Tải model bằng hàm gốc của bạn
         self.model, self.tokenizer = load_internvl()
         self.generation_config = dict(max_new_tokens=8, do_sample=False)
 
@@ -34,8 +50,12 @@ class VLMReranker:
             pixel_values = load_image_tensor(image_path).to(getattr(torch, config.DTYPE)).to(config.DEVICE)
             prompt = RERANK_PROMPT_TEMPLATE.format(query=query_vi)
             response = self.model.chat(self.tokenizer, pixel_values, prompt, self.generation_config)
+            
             match = re.search(r"\d+", response)
-            return float(match.group()) if match else 0.0
+            if match:
+                val = float(match.group())
+                return min(max(val, 0.0), 10.0)  # Giữ trong khoảng 0-10
+            return 0.0
         except Exception as e:
             print(f"[WARN] Lỗi rerank {image_path}: {e}")
             return 0.0
@@ -51,9 +71,14 @@ class VLMReranker:
         candidates = candidates[:top_k]
 
         scored = []
-        for int_id, _rrf_score in candidates:
+        for int_id, rrf_score in candidates:
             row = id_map_by_int_id[int_id]
-            vlm_score = self.score(row["keyframe_path"], query_vi)
-            scored.append((int_id, vlm_score))
+            img_path = row.get("keyframe_path") or row.get("path")
+            
+            vlm_score = self.score(img_path, query_vi)
+            scored.append((int_id, vlm_score, rrf_score))
 
-        return sorted(scored, key=lambda x: -x[1])
+        # Ưu tiên vlm_score giảm dần, nếu bằng vlm_score thì xét rrf_score cao hơn xếp trước
+        scored.sort(key=lambda x: (x[1], x[2]), reverse=True)
+
+        return [(int_id, vlm_score) for int_id, vlm_score, _ in scored]
