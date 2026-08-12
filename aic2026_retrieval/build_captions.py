@@ -109,10 +109,13 @@ def load_internvl(model_path: str = None, quantize4bit: bool = False):
 
 
 CAPTION_PROMPT = (
-    "<image>\n"
-    "Hãy mô tả chi tiết bức ảnh này bằng tiếng Việt: có những ai, đang làm gì, "
-    "trang phục màu gì, bối cảnh/địa điểm ra sao, có vật thể đáng chú ý nào. "
-    "Trả lời trong 1-2 câu ngắn gọn, súc tích, không lặp từ."
+   "<image>\n"
+    "Mô tả chi tiết khung hình video này bằng tiếng Việt:\n"
+    "1. Liệt kê các văn bản, chữ xuất hiện trên màn hình (bao gồm tên kênh truyền hình, logo như HTV7, HTV, VTV, đồng hồ thời gian nếu có).\n"
+    "2. Đối tượng chính: ngôi nhà, kiểu kiến trúc (nhà tạm, nhà tôn, nhà sàn, nhà lá, nhà cao tầng).\n"
+    "3. Bối cảnh & môi trường: ven sông, con kênh, rác thải nhựa, ô nhiễm, cây cối, chuối, sông nước.\n"
+    "4. Hành động & con người (nếu có).\n"
+    "Trả lời ngắn gọn từ 2-3 câu chứa đầy đủ các từ khóa trực quan."
 )
 
 
