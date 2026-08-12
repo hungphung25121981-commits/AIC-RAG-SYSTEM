@@ -14,7 +14,10 @@ from tqdm import tqdm
 
 import config
 import utils
-
+try:
+    from download_weights import download_and_extract_custom_weights
+except ImportError:
+    download_and_extract_custom_weights = None
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
