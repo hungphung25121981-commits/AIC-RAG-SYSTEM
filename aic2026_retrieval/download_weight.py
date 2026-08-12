@@ -1,42 +1,44 @@
-import os
-import zipfile
+iimport os
+import subprocess
 import urllib.request
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOCAL_DIR = os.path.join(BASE_DIR, "internvl2_5_local")
 
-# Thay link Release của bạn vào đây
-URL_PART1 = "https://github.com/USER/REPO/releases/download/v1.0/intern.zip.001"
-URL_PART2 = "https://github.com/USER/REPO/releases/download/v1.0/intern.zip.002"
+# Dán 2 link copy từ GitHub Release vào đây
+URL_PART1 = "https://github.com/hungphung25121981-commits/AIC-RAG-SYSTEM/releases/download/MODEL/internvl2_5_local.part1.rar"
+URL_PART2 = "https://github.com/hungphung25121981-commits/AIC-RAG-SYSTEM/releases/download/MODEL/internvl2_5_local.part2.rar"
 
-def download_and_extract_custom_weights():
+def download_and_extract_rar():
     if os.path.exists(LOCAL_DIR) and os.listdir(LOCAL_DIR):
-        print(f"[INFO] Thư mục weights đã tồn tại tại {LOCAL_DIR}, bỏ qua bước tải.")
+        print(f"[INFO] Weights đã có sẵn tại {LOCAL_DIR}, bỏ qua bước tải.")
         return
 
     os.makedirs(LOCAL_DIR, exist_ok=True)
     
-    p1_path = os.path.join(BASE_DIR, "part1.tmp")
-    p2_path = os.path.join(BASE_DIR, "part2.tmp")
-    full_zip_path = os.path.join(BASE_DIR, "intern_custom.zip")
+    file_p1 = os.path.join(BASE_DIR, "internvl2_5_local.part1.rar")
+    file_p2 = os.path.join(BASE_DIR, "internvl2_5_local.part2.rar")
 
-    print("==> 1. Đang tải các phần weights custom từ GitHub Release...")
-    urllib.request.urlretrieve(URL_PART1, p1_path)
-    urllib.request.urlretrieve(URL_PART2, p2_path)
+    print("==> 1. Đang tải Part 1 (1.76 GB)...")
+    urllib.request.urlretrieve(URL_PART1, file_p1)
+    
+    print("==> 2. Đang tải Part 2 (1.33 GB)...")
+    urllib.request.urlretrieve(URL_PART2, file_p2)
 
-    print("==> 2. Đang nối các file...")
-    with open(full_zip_path, "wb") as outfile:
-        for p in [p1_path, p2_path]:
-            with open(p, "rb") as infile:
-                outfile.write(infile.read())
-            os.remove(p)
+    print("==> 3. Cài đặt unrar và giải nén RAR Multipart...")
+    # Cài đặt công cụ unrar nếu chạy trên Kaggle/Colab/Ubuntu
+    subprocess.run(["apt-get", "update", "-y"], stdout=subprocess.DEVNULL)
+    subprocess.run(["apt-get", "install", "-y", "unrar"], stdout=subprocess.DEVNULL)
 
-    print("==> 3. Đang giải nén bộ weights custom...")
-    with zipfile.ZipFile(full_zip_path, "r") as zip_ref:
-        zip_ref.extractall(LOCAL_DIR)
+    # Giải nén file part1 (unrar sẽ tự động liên kết kéo part2 theo)
+    cmd = f"unrar x -o+ {file_p1} {BASE_DIR}"
+    subprocess.run(cmd, shell=True, check=True)
 
-    os.remove(full_zip_path)
-    print(f"==> HOÀN TẤT! Weights custom đã được giải nén vào {LOCAL_DIR}")
+    # Dọn dẹp 2 file rar sau khi giải nén xong để đỡ tốn dung lượng ổ cứng
+    if os.path.exists(file_p1): os.remove(file_p1)
+    if os.path.exists(file_p2): os.remove(file_p2)
+
+    print(f"==> HOÀN TẤT! Đã giải nén bộ weights custom vào {LOCAL_DIR}")
 
 if __name__ == "__main__":
-    download_and_extract_custom_weights()
+    download_and_extract_rar()
