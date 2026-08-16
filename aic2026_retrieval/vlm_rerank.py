@@ -74,11 +74,46 @@ class VLMReranker:
         for int_id, rrf_score in candidates:
             row = id_map_by_int_id[int_id]
             img_path = row.get("keyframe_path") or row.get("path")
-            
-            vlm_score = self.score(img_path, query_vi)
-            scored.append((int_id, vlm_score, rrf_score))
+    # Thêm vào cuối file vlm_rerank.py (nếu chưa có)
+    # Thêm vào cuối file vlm_rerank.py (nếu chưa có)
+    def answer_question(keyframe_path: str, question: str) -> str:
+    """
+    Tải model InternVL2.5 từ Hugging Face và trả lời câu hỏi dựa trên 1 keyframe
+    """
+        import torch
+        from PIL import Image
+        from transformers import AutoModel, AutoTokenizer
+        import config
 
-        # Ưu tiên vlm_score giảm dần, nếu bằng vlm_score thì xét rrf_score cao hơn xếp trước
-        scored.sort(key=lambda x: (x[1], x[2]), reverse=True)
+        if not os.path.exists(keyframe_path):
+            return "Không tìm thấy file keyframe"
 
-        return [(int_id, vlm_score) for int_id, vlm_score, _ in scored]
+        model_id = getattr(config, "INTERNVL_MODEL_ID", "OpenGVLab/InternVL2_5-2B")
+        dtype = getattr(torch, config.DTYPE, torch.bfloat16)
+
+        print(f"[vlm_rerank] Loading {model_id} from Hugging Face for Q&A...")
+        model = AutoModel.from_pretrained(
+            model_id,
+            torch_dtype=dtype,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True
+        ).eval().to(config.DEVICE)
+
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
+
+        image = Image.open(keyframe_path).convert("RGB")
+    
+    # Format prompt ngắn gọn cho AIC
+        prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
+
+        pixel_values = model.extract_feature(image).to(dtype).to(config.DEVICE)
+        generation_config = dict(max_new_tokens=128, do_sample=False)
+
+        response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
+    
+    # Giải phóng VRAM ngay sau khi trả lời xong
+        del model
+        if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        
+        return response.strip()
