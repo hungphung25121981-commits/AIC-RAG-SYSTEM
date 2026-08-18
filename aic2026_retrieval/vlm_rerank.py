@@ -30,7 +30,65 @@ RERANK_PROMPT_TEMPLATE = (
     "Chỉ trả lời đúng 1 số nguyên, không giải thích thêm."
 )
 
+import os
+import torch
+from PIL import Image
+from transformers import AutoModel, AutoTokenizer
+import config
 
+
+def answer_question(keyframe_path: str, question: str) -> str:
+    """Trả lời câu hỏi VQA dựa trên 1 keyframe bằng model Hugging Face (OpenGVLab/InternVL2_5-2B)."""
+    if not os.path.exists(keyframe_path):
+        return f"Không tìm thấy file keyframe tại: {keyframe_path}"
+
+    # Lấy repo ID từ config hoặc ưu tiên repo HF chính thức
+    model_id = getattr(config, "INTERNVL_HF_PATH", "OpenGVLab/InternVL2_5-2B")
+
+    # Kiểm tra an toàn: Nếu dính đường dẫn local thì tự động đổi về HF repo ID
+    if model_id.startswith(".") or model_id.startswith("/") or "local" in model_id:
+        model_id = "OpenGVLab/InternVL2_5-2B"
+
+    print(f"[VQA] Loading model from Hugging Face: {model_id}...")
+
+    dtype = getattr(config, "DTYPE", torch.bfloat16) if hasattr(config, "DTYPE") else torch.bfloat16
+    device = getattr(config, "DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+
+    try:
+        model = (
+            AutoModel.from_pretrained(
+                model_id,
+                torch_dtype=dtype,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+            )
+            .eval()
+            .to(device)
+        )
+
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
+        image = Image.open(keyframe_path).convert("RGB")
+
+        prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
+
+        try:
+            transform = model.build_transform(input_size=448)
+            pixel_values = transform(image).unsqueeze(0).to(dtype).to(device)
+        except AttributeError:
+            pixel_values = model.extract_feature(image).to(dtype).to(device)
+
+        generation_config = dict(max_new_tokens=128, do_sample=False)
+        response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
+
+        # Giải phóng VRAM ngay sau khi trả lời xong
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return response.strip()
+
+    except Exception as e:
+        return f"[ERROR VQA Runtime]: {e}"
 class VLMReranker:
     def __init__(self):
         # 1. Kiểm tra nếu chưa có weights thì tự động tải
@@ -75,51 +133,7 @@ class VLMReranker:
         for int_id, rrf_score in candidates:
             row = id_map_by_int_id[int_id]
             img_path = row.get("keyframe_path") or row.get("path")
-    def answer_question(self, keyframe_path: str, question: str) -> str:
-        """Trả lời câu hỏi VQA dựa trên 1 keyframe bằng model Hugging Face."""
-        if not os.path.exists(keyframe_path):
-            return f"Không tìm thấy file keyframe tại: {keyframe_path}"
 
-        # Ép buộc lấy repo ID của Hugging Face
-        model_id = getattr(config, "INTERNVL_HF_PATH", "OpenGVLab/InternVL2_5-2B")
-        
-        # Phòng trường hợp biến config bị dính đường dẫn local
-        if model_id.startswith(".") or model_id.startswith("/") or "local" in model_id:
-            model_id = "OpenGVLab/InternVL2_5-2B"
-
-        print(f"[VQA] Loading Hugging Face model: {model_id}...")
-
-        dtype = getattr(config, "DTYPE", torch.bfloat16) if hasattr(config, "DTYPE") else torch.bfloat16
-        device = getattr(config, "DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
-
-        try:
-            model = AutoModel.from_pretrained(
-                model_id,
-                torch_dtype=dtype,
-                trust_remote_code=True,
-                low_cpu_mem_usage=True
-            ).eval().to(device)
-
-            tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
-            image = Image.open(keyframe_path).convert("RGB")
-
-            prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
-
-            try:
-                transform = model.build_transform(input_size=448)
-                pixel_values = transform(image).unsqueeze(0).to(dtype).to(device)
-            except AttributeError:
-                pixel_values = model.extract_feature(image).to(dtype).to(device)
-
-            generation_config = dict(max_new_tokens=128, do_sample=False)
-            response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
-
-            # Dọn dẹp VRAM
-            del model
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            return response.strip()
 
         except Exception as e:
             return f"[ERROR VQA Runtime]: {e}"
