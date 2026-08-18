@@ -7,6 +7,7 @@ Chạy:
 
     # Không rerank (nhanh hơn, dùng lúc cần tốc độ / thử nghiệm):
     python query_cli.py --query "..." --top-k 100
+    
 """
 
 import argparse
@@ -20,13 +21,20 @@ import utils
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--query", type=str, required=True, help="Câu truy vấn tiếng Việt")
-    parser.add_argument("--top-k", type=int, default=config.FINAL_TOPK)
-    parser.add_argument("--rerank", action="store_true", help="Bật VLM rerank tầng cuối")
+    parser = argparse.ArgumentParser(description="AIC Retrieval & Visual QA CLI")
+    parser.add_argument("--query", type=str, required=True, help="Câu truy vấn tiếng Việt để tìm kiếm frame")
+    parser.add_argument("--top-k", type=int, default=config.FINAL_TOPK, help="Số lượng kết quả xuất ra")
+    parser.add_argument("--rerank", action="store_true", help="Bật VLM rerank tầng cuối cho danh sách kết quả")
     parser.add_argument("--out-csv", type=str, default=None, help="Ghi kết quả ra file CSV nộp bài")
+    
+    # Dành riêng cho câu hỏi VQA
+    parser.add_argument("--question", type=str, default=None, help="Câu hỏi cần VLM trả lời dựa trên Top-1 frame")
+    parser.add_argument("--qa", action="store_true", help="Bật chế độ QA")
     args = parser.parse_args()
 
+    # =========================================================================
+    # 1. RETRIEVAL (Giữ nguyên như cũ: Hybrid Search Dense + BM25)
+    # =========================================================================
     print("Đang load index (dense + bm25)...")
     dense_searcher = search.DenseSearcher()
     bm25_searcher = search.BM25Searcher()
@@ -47,6 +55,7 @@ def main():
     id_map_rows = list(utils.read_jsonl(config.ID_MAP_PATH))
     id_map_by_int_id = {row["int_id"]: row for row in id_map_rows}
 
+    # Bật Rerank nếu truyền flag --rerank
     if args.rerank:
         print("Đang giải phóng bộ nhớ GPU trước khi chạy VLM Rerank...")
         if torch.cuda.is_available():
@@ -57,13 +66,13 @@ def main():
         reranker = vlm_rerank.VLMReranker()
         final_results = reranker.rerank(fused, args.query, id_map_by_int_id, top_k=config.RERANK_TOPK)
         
-        # Phần còn lại (sau rerank_topk) giữ nguyên thứ tự RRF, nối vào cuối
         reranked_ids = {i for i, _ in final_results}
         remaining = [(i, s) for i, s in fused if i not in reranked_ids]
         final_results = final_results + remaining
     else:
         final_results = fused
 
+    # Hiển thị và lưu CSV
     print("\n=== KẾT QUẢ (rank | video_id | frame_id | score) ===")
     rows_out = []
     for rank, (int_id, score) in enumerate(final_results[: args.top_k], start=1):
@@ -81,6 +90,33 @@ def main():
             writer.writeheader()
             writer.writerows(rows_out)
         print(f"\nĐã ghi kết quả -> {args.out_csv}")
+
+    # =========================================================================
+    # 2. VQA (Chỉ chạy khi có --question hoặc --qa)
+    # =========================================================================
+    if args.question or args.qa:
+        q_text = args.question if args.question else args.query
+        top1_int_id = final_results[0][0]
+        top1_row = id_map_by_int_id[top1_int_id]
+
+        print("\n=================== VLM ANSWER (TOP-1 FRAME) ===================")
+        print(f"Target Video: {top1_row['video_id']} | Frame ID: {top1_row['frame_id']}")
+        print(f"Question    : {q_text}")
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        try:
+            import vlm_rerank
+            vqa_engine = vlm_rerank.VLMReranker()
+            img_path = top1_row.get("path") or os.path.join(config.KEYFRAMES_DIR, top1_row["video_id"], f"{top1_row['frame_id']:06d}.jpg")
+            
+            # Gọi trả lời
+            answer = vqa_engine.answer_question(img_path=img_path, question=q_text)
+            print(f"\n👉 ANSWER: {answer}")
+        except Exception as e:
+            print(f"[ERROR] Không thể chạy VQA: {e}")
+        print("================================================================\n")
 
 
 if __name__ == "__main__":
