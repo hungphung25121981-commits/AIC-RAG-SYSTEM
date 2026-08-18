@@ -85,7 +85,7 @@ class VLMReranker:
         if not os.path.exists(keyframe_path):
             return "Không tìm thấy file keyframe"
 
-        model_id = getattr(config, "INTERNVL_MODEL_ID", "OpenGVLab/InternVL2_5-2B")
+        model_id = getattr(config, "INTERNVL_MODEL_PATH", getattr(config, "INTERNVL_MODEL_ID", "OpenGVLab/InternVL2_5-2B"))
         dtype = getattr(torch, config.DTYPE, torch.bfloat16) if hasattr(config, "DTYPE") else torch.bfloat16
         device = getattr(config, "DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
 
