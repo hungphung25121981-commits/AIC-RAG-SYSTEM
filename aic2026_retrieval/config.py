@@ -32,6 +32,11 @@ import yaml
 # ----------------------------------------------------------------------
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.environ.get("AIC_CONFIG", os.path.join(_THIS_DIR, "configs", "base.yaml"))
+INTERNVL_LOCAL_PATH = "./aic2026_retrieval/internvl2_5_local"
+INTERNVL_HF_PATH = "OpenGVLab/InternVL2_5-2B"
+
+# Gán mặc định nếu các file cũ truy cập INTERNVL_MODEL_PATH
+INTERNVL_MODEL_PATH = INTERNVL_LOCAL_PATH
 
 if not os.path.isfile(CONFIG_PATH):
     raise FileNotFoundError(
