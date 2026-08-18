@@ -94,6 +94,7 @@ def main():
     # =========================================================================
     # 2. VQA (Chỉ chạy khi có --question hoặc --qa)
     # =========================================================================
+   # BƯỚC VQA
     if args.question or args.qa:
         q_text = args.question if args.question else args.query
         top1_int_id = final_results[0][0]
@@ -108,11 +109,12 @@ def main():
 
         try:
             import vlm_rerank
-            vqa_engine = vlm_rerank.VLMReranker()
-            img_path = top1_row.get("path") or os.path.join(config.KEYFRAMES_DIR, top1_row["video_id"], f"{top1_row['frame_id']:06d}.jpg")
-            
-            # Gọi trả lời
-            answer = vqa_engine.answer_question(img_path=img_path, question=q_text)
+            img_path = top1_row.get("path") or os.path.join(
+                config.KEYFRAMES_DIR, top1_row["video_id"], f"{top1_row['frame_id']:06d}.jpg"
+            )
+
+            # Gọi trực tiếp hàm answer_question của vlm_rerank module
+            answer = vlm_rerank.answer_question(keyframe_path=img_path, question=q_text)
             print(f"\n👉 ANSWER: {answer}")
         except Exception as e:
             print(f"[ERROR] Không thể chạy VQA: {e}")
