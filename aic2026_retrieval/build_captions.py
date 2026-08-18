@@ -78,7 +78,12 @@ def load_internvl(model_path: str = None, quantize4bit: bool = False):
     from transformers import AutoModel, AutoTokenizer
     
     # Ưu tiên model_path truyền từ CLI, nếu không dùng từ config
-    model_id = model_path or getattr(config, "INTERNVL_MODEL_ID", "OpenGVLab/InternVL2_5-2B")
+    model_id = getattr(
+    config, 
+    "INTERNVL_LOCAL_PATH", 
+    getattr(config, "INTERNVL_MODEL_PATH", "./aic2026_retrieval/internvl2_5_local")
+    )
+    print(f"[build_captions] Loading model from: {model_id}")
     dtype = getattr(torch, config.DTYPE)
     load_kwargs = dict(
         torch_dtype=dtype,
