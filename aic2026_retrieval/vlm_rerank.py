@@ -14,6 +14,7 @@ from PIL import Image
 from transformers import AutoModel, AutoTokenizer, AutoConfig, AutoTokenizer
 import config
 from build_captions import load_image_tensor, load_internvl  # tái dùng preprocessing + loader
+from transformers import GenerationMixin, GenerationConfig
 
 # Tự động tải weights nếu thiếu
 try:
@@ -161,6 +162,22 @@ def answer_question(keyframe_path: str, question: str) -> str:
     except Exception as e:
         return f"[ERROR VQA Runtime]: {e}"
 
+def _patch_generation(model):
+    """Fix: NoneType has no attribute '_from_model_config'.
+    InternVL custom code monkey-patch GenerationMixin vào language_model
+    nhưng không set generation_config -> generate() gọi None._from_model_config -> lỗi."""
+    lm = getattr(model, "language_model", model)
+
+    if not hasattr(lm, "generate"):
+        lm.__class__ = type(lm.__class__.__name__, (lm.__class__, GenerationMixin), {})
+
+    if getattr(lm, "generation_config", None) is None:
+        lm.generation_config = GenerationConfig.from_model_config(lm.config)
+
+    if getattr(model, "generation_config", None) is None:
+        model.generation_config = GenerationConfig.from_model_config(model.config)
+
+    return model
 class VLMReranker:
     def __init__(self):
         # 1. Kiểm tra nếu chưa có weights thì tự động tải
