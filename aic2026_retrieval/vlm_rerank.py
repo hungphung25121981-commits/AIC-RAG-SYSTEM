@@ -11,7 +11,7 @@ import re
 from typing import List, Tuple
 import torch
 from PIL import Image
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, AutoConfig, AutoTokenizer
 import config
 from build_captions import load_image_tensor, load_internvl  # tái dùng preprocessing + loader
 
@@ -30,7 +30,7 @@ RERANK_PROMPT_TEMPLATE = (
     "Chỉ trả lời đúng 1 số nguyên, không giải thích thêm."
 )
 def answer_question(keyframe_path: str, question: str) -> str:
-    """Trả lời câu hỏi VQA bằng InternVL2.5 - Đã fix triệt để Meta Tensor trên Vision Tower."""
+    """Trả lời VQA bằng InternVL2.5 - Đã vô hiệu hóa init_empty_weights để sửa lỗi Meta Tensor."""
     if not os.path.exists(keyframe_path):
         return f"Không tìm thấy file keyframe tại: {keyframe_path}"
 
@@ -44,34 +44,44 @@ def answer_question(keyframe_path: str, question: str) -> str:
     dtype = torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16
 
     try:
-        # Load trực tiếp với device_map="cuda" để ép toàn bộ Sub-modules (kể cả Vision) vào GPU
-        model = AutoModel.from_pretrained(
-            model_id,
-            torch_dtype=dtype,
-            trust_remote_code=True,
-            device_map="cuda" if torch.cuda.is_available() else None,
-            low_cpu_mem_usage=False
-        ).eval()
+        # 1. Tải Config và ép tắt cờ _fast_init
+        model_config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        model_config._fast_init = False
 
-        # Dòng quan trọng: Ép Vision Model ra khỏi trạng thái Meta nếu còn sót lại
-        if hasattr(model, "vision_model"):
-            model.vision_model = model.vision_model.to(device=device, dtype=dtype)
+        # 2. Khởi tạo Model trực tiếp không qua low_cpu_mem_usage hay device_map tự động
+        model = (
+            AutoModel.from_pretrained(
+                model_id,
+                config=model_config,
+                torch_dtype=dtype,
+                trust_remote_code=True,
+                low_cpu_mem_usage=False,
+                device_map=None,
+            )
+            .eval()
+            .to(device)
+        )
+
+        # 3. Đảm bảo Vision Encoder không bị dính bất kỳ con trỏ meta nào
+        for p in model.parameters():
+            if p.is_meta:
+                p.data = torch.empty_like(p.data, device=device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
         image = Image.open(keyframe_path).convert("RGB")
 
         prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
 
-        # Chuẩn bị pixel_values
+        # Transform ảnh
         transform = model.build_transform(input_size=448)
         pixel_values = transform(image).unsqueeze(0).to(dtype=dtype, device=device)
 
         generation_config = dict(max_new_tokens=128, do_sample=False)
-        
+
         with torch.no_grad():
             response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
 
-        # Giải phóng GPU VRAM ngay lập tức
+        # Giải phóng GPU VRAM
         del model
         del pixel_values
         if torch.cuda.is_available():
