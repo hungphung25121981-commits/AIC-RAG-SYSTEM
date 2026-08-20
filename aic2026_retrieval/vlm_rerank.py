@@ -143,13 +143,11 @@ def answer_question(keyframe_path: str, question: str) -> str:
         pixel_values = pixel_values.to(dtype=dtype, device=device)
 
         prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
-
         generation_config = dict(max_new_tokens=128, do_sample=False)
         with torch.no_grad():
             response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
-
-        with torch.no_grad():
-            response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
+        # XOÁ đoạn with torch.no_grad(): response, _ = model.chat(...) bị lặp lại ngay dưới
+        # XOÁ đoạn with torch.no_grad(): response, _ = model.chat(...) bị lặp lại ngay dưới
 
         # Dọn dẹp VRAM
         del model
@@ -195,7 +193,9 @@ class VLMReranker:
                 download_and_extract_custom_weights()
 
         # 2. Tải model bằng hàm load_internvl
+                # 2. Tải model bằng hàm load_internvl
         self.model, self.tokenizer = load_internvl()
+        self.model = _patch_generation(self.model)   # <-- FIX, phòng khi load_internvl() cũng bị thiếu generation_config
         self.generation_config = dict(max_new_tokens=8, do_sample=False)
         self.model_id = model_path
 
