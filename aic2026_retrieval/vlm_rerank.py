@@ -32,7 +32,7 @@ RERANK_PROMPT_TEMPLATE = (
 
 
 def answer_question(keyframe_path: str, question: str) -> str:
-    """Trả lời câu hỏi VQA dựa trên 1 keyframe bằng model Hugging Face (OpenGVLab/InternVL2_5-2B)."""
+    """Trả lời câu hỏi VQA bằng InternVL2.5 không bị lỗi Meta Tensor."""
     if not os.path.exists(keyframe_path):
         return f"Không tìm thấy file keyframe tại: {keyframe_path}"
 
@@ -42,50 +42,41 @@ def answer_question(keyframe_path: str, question: str) -> str:
 
     print(f"[VQA] Loading model from Hugging Face: {model_id}...")
 
-    dtype = getattr(config, "DTYPE", torch.bfloat16) if hasattr(config, "DTYPE") else torch.bfloat16
-    device = getattr(config, "DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Ép dùng float16 nếu bfloat16 bị lỗi trên một số dòng GPU Kaggle
+    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
 
     try:
-        # BỎ low_cpu_mem_usage=True ĐỂ TRÁNH META TENSORS ERROR
-        model = (
-            AutoModel.from_pretrained(
-                model_id,
-                torch_dtype=dtype,
-                trust_remote_code=True,
-                low_cpu_mem_usage=False,  # FIX: Tránh load trọng số dạng Meta Tensor
-            )
-            .eval()
-            .to(device)
-        )
+        # BẮT BUỘC: device_map=None và low_cpu_mem_usage=False để nạp 100% trọng số thực
+        model = AutoModel.from_pretrained(
+            model_id,
+            torch_dtype=dtype,
+            trust_remote_code=True,
+            low_cpu_mem_usage=False,
+            device_map=None
+        ).eval()
+
+        # Đưa toàn bộ module sang GPU
+        model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
         image = Image.open(keyframe_path).convert("RGB")
 
         prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
 
-        # Chuẩn bị pixel_values an toàn
-        try:
-            transform = model.build_transform(input_size=448)
-            pixel_values = transform(image).unsqueeze(0).to(dtype).to(device)
-        except Exception:
-            # Fallback nếu model không có build_transform
-            from torchvision import transforms
-            from torchvision.transforms.functional import InterpolationMode
-
-            IMAGENET_MEAN = (0.485, 0.456, 0.406)
-            IMAGENET_STD = (0.229, 0.224, 0.225)
-            transform = transforms.Compose([
-                transforms.Resize((448, 448), interpolation=InterpolationMode.BICUBIC),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-            ])
-            pixel_values = transform(image).unsqueeze(0).to(dtype).to(device)
+        # Xử lý ảnh bằng hàm build_transform nội bộ của InternVL
+        transform = model.build_transform(input_size=448)
+        pixel_values = transform(image).unsqueeze(0).to(dtype).to(device)
 
         generation_config = dict(max_new_tokens=128, do_sample=False)
-        response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
+        
+        # Chạy suy luận
+        with torch.no_grad():
+            response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
 
-        # Giải phóng GPU VRAM
+        # Giải phóng VRAM lập tức
         del model
+        del pixel_values
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
