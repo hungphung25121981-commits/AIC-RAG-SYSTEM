@@ -107,20 +107,15 @@ def load_image(image_path, input_size=448, max_num=12):
 def answer_question(keyframe_path: str, question: str) -> str:
     if not os.path.exists(keyframe_path):
         return f"Không tìm thấy file keyframe tại: {keyframe_path}"
-
     model_id = getattr(config, "INTERNVL_HF_PATH", "OpenGVLab/InternVL2_5-2B")
     if model_id.startswith(".") or model_id.startswith("/") or "local" in model_id:
         model_id = "OpenGVLab/InternVL2_5-2B"
-
     print(f"[VQA] Loading model from Hugging Face: {model_id}...")
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16
-
     try:
-        # Bắt buộc tắt low_cpu_mem_usage và không dùng device_map để tránh đẩy tensor vào 'meta'
         tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
-        
+
         model = AutoModel.from_pretrained(
             model_id,
             torch_dtype=dtype,
@@ -128,10 +123,9 @@ def answer_question(keyframe_path: str, question: str) -> str:
             low_cpu_mem_usage=False,
             device_map=None
         )
-
-        # Chuyển model sang GPU thủ công
         model = model.to(device).eval()
-        from transformers import GenerationMixin
+
+        from transformers import GenerationMixin, GenerationConfig
         lm = model.language_model
         if not hasattr(lm, "generate"):
             lm.__class__ = type(
@@ -139,29 +133,31 @@ def answer_question(keyframe_path: str, question: str) -> str:
                 (lm.__class__, GenerationMixin),
                 {}
             )
+
+        # ---- ĐÂY LÀ PHẦN BỊ THIẾU, THÊM VÀO ----
+        if getattr(lm, "generation_config", None) is None:
+            lm.generation_config = GenerationConfig.from_model_config(lm.config)
+        if getattr(model, "generation_config", None) is None:
+            model.generation_config = GenerationConfig.from_model_config(model.config)
+        print("[DEBUG] lm.generation_config =", lm.generation_config)
+        # -----------------------------------------
+
         pixel_values = load_image(keyframe_path, input_size=448, max_num=12)
         pixel_values = pixel_values.to(dtype=dtype, device=device)
-
         prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
         generation_config = dict(max_new_tokens=128, do_sample=False)
         with torch.no_grad():
             response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
-        # XOÁ đoạn with torch.no_grad(): response, _ = model.chat(...) bị lặp lại ngay dưới
-        # XOÁ đoạn with torch.no_grad(): response, _ = model.chat(...) bị lặp lại ngay dưới
 
-        # Dọn dẹp VRAM
         del model
         del pixel_values
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-
         return response.strip()
-
     except Exception as e:
         import traceback
-        traceback.print_exc()   # <-- in đầy đủ stack trace ra console
+        traceback.print_exc()
         return f"[ERROR VQA Runtime]: {e}"
-
 def _patch_generation(model):
     """Fix: NoneType has no attribute '_from_model_config'.
     InternVL custom code monkey-patch GenerationMixin vào language_model
