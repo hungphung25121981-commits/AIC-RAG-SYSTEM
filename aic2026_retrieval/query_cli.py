@@ -95,6 +95,7 @@ def main():
     # 2. VQA (Chỉ chạy khi có --question hoặc --qa)
     # =========================================================================
    # BƯỚC VQA
+    # BƯỚC VQA
     if args.question or args.qa:
         q_text = args.question if args.question else args.query
         top1_int_id = final_results[0][0]
@@ -104,16 +105,34 @@ def main():
         print(f"Target Video: {top1_row['video_id']} | Frame ID: {top1_row['frame_id']}")
         print(f"Question    : {q_text}")
 
+        # 1. Thử lấy đường dẫn có sẵn từ id_map
+        img_path = top1_row.get("keyframe_path") or top1_row.get("path")
+
+        # 2. Nếu không có hoặc file không tồn tại, tự dò tìm linh hoạt trên đĩa
+        if not img_path or not os.path.exists(img_path):
+            video_dir = os.path.join(config.KEYFRAMES_DIR, top1_row["video_id"])
+            frame_id_str = str(top1_row["frame_id"])
+
+            if os.path.exists(video_dir):
+                # Quét tất cả file trong thư mục video để tìm file chứa frame_id
+                matched_files = [
+                    os.path.join(video_dir, f) for f in os.listdir(video_dir)
+                    if frame_id_str in f and f.lower().endswith(('.jpg', '.jpeg', '.png'))
+                ]
+                if matched_files:
+                    img_path = matched_files[0]  # Lấy file khớp đầu tiên
+            
+            # Fallback nếu quét không ra
+            if not img_path:
+                img_path = os.path.join(video_dir, f"{top1_row['frame_id']:06d}.jpg")
+
+        print(f"Keyframe Path resolved: {img_path}")
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
         try:
             import vlm_rerank
-            img_path = top1_row.get("path") or os.path.join(
-                config.KEYFRAMES_DIR, top1_row["video_id"], f"{top1_row['frame_id']:06d}.jpg"
-            )
-
-            # Gọi trực tiếp hàm answer_question của vlm_rerank module
             answer = vlm_rerank.answer_question(keyframe_path=img_path, question=q_text)
             print(f"\n👉 ANSWER: {answer}")
         except Exception as e:
