@@ -139,9 +139,15 @@ def answer_question(keyframe_path: str, question: str) -> str:
 
         # Chuẩn bị pixel_values
         transform = model.build_transform(input_size=448)
-        pixel_values = transform(image).unsqueeze(0).to(dtype=dtype, device=device)
+                # Đọc ảnh + tiling chuẩn InternVL
+        pixel_values = load_image(keyframe_path, input_size=448, max_num=12)
+        pixel_values = pixel_values.to(dtype=dtype, device=device)
+
+        prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
 
         generation_config = dict(max_new_tokens=128, do_sample=False)
+        with torch.no_grad():
+            response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
 
         with torch.no_grad():
             response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
