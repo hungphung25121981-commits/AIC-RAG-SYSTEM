@@ -30,7 +30,6 @@ RERANK_PROMPT_TEMPLATE = (
     "Chỉ trả lời đúng 1 số nguyên, không giải thích thêm."
 )
 def answer_question(keyframe_path: str, question: str) -> str:
-    """Trả lời VQA bằng InternVL2.5 - Đã vô hiệu hóa init_empty_weights để sửa lỗi Meta Tensor."""
     if not os.path.exists(keyframe_path):
         return f"Không tìm thấy file keyframe tại: {keyframe_path}"
 
@@ -44,35 +43,25 @@ def answer_question(keyframe_path: str, question: str) -> str:
     dtype = torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16
 
     try:
-        # 1. Tải Config và ép tắt cờ _fast_init
-        model_config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
-        model_config._fast_init = False
-
-        # 2. Khởi tạo Model trực tiếp không qua low_cpu_mem_usage hay device_map tự động
-        model = (
-            AutoModel.from_pretrained(
-                model_id,
-                config=model_config,
-                torch_dtype=dtype,
-                trust_remote_code=True,
-                low_cpu_mem_usage=False,
-                device_map=None,
-            )
-            .eval()
-            .to(device)
+        # Bắt buộc tắt low_cpu_mem_usage và không dùng device_map để tránh đẩy tensor vào 'meta'
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
+        
+        model = AutoModel.from_pretrained(
+            model_id,
+            torch_dtype=dtype,
+            trust_remote_code=True,
+            low_cpu_mem_usage=False,
+            device_map=None
         )
 
-        # 3. Đảm bảo Vision Encoder không bị dính bất kỳ con trỏ meta nào
-        for p in model.parameters():
-            if p.is_meta:
-                p.data = torch.empty_like(p.data, device=device)
+        # Chuyển model sang GPU thủ công
+        model = model.to(device).eval()
 
-        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
+        # Đọc ảnh
         image = Image.open(keyframe_path).convert("RGB")
-
         prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
 
-        # Transform ảnh
+        # Chuẩn bị pixel_values
         transform = model.build_transform(input_size=448)
         pixel_values = transform(image).unsqueeze(0).to(dtype=dtype, device=device)
 
@@ -81,7 +70,7 @@ def answer_question(keyframe_path: str, question: str) -> str:
         with torch.no_grad():
             response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
 
-        # Giải phóng GPU VRAM
+        # Dọn dẹp VRAM
         del model
         del pixel_values
         if torch.cuda.is_available():
