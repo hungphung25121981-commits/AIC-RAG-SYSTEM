@@ -130,6 +130,14 @@ def answer_question(keyframe_path: str, question: str) -> str:
 
         # Chuyển model sang GPU thủ công
         model = model.to(device).eval()
+        from transformers import GenerationMixin
+        lm = model.language_model
+        if not hasattr(lm, "generate"):
+            lm.__class__ = type(
+                lm.__class__.__name__,
+                (lm.__class__, GenerationMixin),
+                {}
+            )
         pixel_values = load_image(keyframe_path, input_size=448, max_num=12)
         pixel_values = pixel_values.to(dtype=dtype, device=device)
 
