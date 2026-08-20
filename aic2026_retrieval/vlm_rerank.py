@@ -158,6 +158,8 @@ def answer_question(keyframe_path: str, question: str) -> str:
         return response.strip()
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()   # <-- in đầy đủ stack trace ra console
         return f"[ERROR VQA Runtime]: {e}"
 
 def _patch_generation(model):
