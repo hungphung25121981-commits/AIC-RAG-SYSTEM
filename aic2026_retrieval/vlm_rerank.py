@@ -36,10 +36,7 @@ def answer_question(keyframe_path: str, question: str) -> str:
     if not os.path.exists(keyframe_path):
         return f"Không tìm thấy file keyframe tại: {keyframe_path}"
 
-    # Lấy repo ID từ config hoặc ưu tiên repo HF chính thức
     model_id = getattr(config, "INTERNVL_HF_PATH", "OpenGVLab/InternVL2_5-2B")
-
-    # Kiểm tra an toàn: Nếu dính đường dẫn local thì tự động đổi về HF repo ID
     if model_id.startswith(".") or model_id.startswith("/") or "local" in model_id:
         model_id = "OpenGVLab/InternVL2_5-2B"
 
@@ -49,12 +46,13 @@ def answer_question(keyframe_path: str, question: str) -> str:
     device = getattr(config, "DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
 
     try:
+        # BỎ low_cpu_mem_usage=True ĐỂ TRÁNH META TENSORS ERROR
         model = (
             AutoModel.from_pretrained(
                 model_id,
                 torch_dtype=dtype,
                 trust_remote_code=True,
-                low_cpu_mem_usage=True,
+                low_cpu_mem_usage=False,  # FIX: Tránh load trọng số dạng Meta Tensor
             )
             .eval()
             .to(device)
@@ -65,16 +63,28 @@ def answer_question(keyframe_path: str, question: str) -> str:
 
         prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
 
+        # Chuẩn bị pixel_values an toàn
         try:
             transform = model.build_transform(input_size=448)
             pixel_values = transform(image).unsqueeze(0).to(dtype).to(device)
-        except AttributeError:
-            pixel_values = model.extract_feature(image).to(dtype).to(device)
+        except Exception:
+            # Fallback nếu model không có build_transform
+            from torchvision import transforms
+            from torchvision.transforms.functional import InterpolationMode
+
+            IMAGENET_MEAN = (0.485, 0.456, 0.406)
+            IMAGENET_STD = (0.229, 0.224, 0.225)
+            transform = transforms.Compose([
+                transforms.Resize((448, 448), interpolation=InterpolationMode.BICUBIC),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            ])
+            pixel_values = transform(image).unsqueeze(0).to(dtype).to(device)
 
         generation_config = dict(max_new_tokens=128, do_sample=False)
         response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
 
-        # Giải phóng VRAM ngay sau khi trả lời xong
+        # Giải phóng GPU VRAM
         del model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
