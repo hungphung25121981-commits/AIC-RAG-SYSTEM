@@ -29,10 +29,8 @@ RERANK_PROMPT_TEMPLATE = (
     "0-10 (0 = hoàn toàn không liên quan, 10 = khớp hoàn hảo mọi chi tiết). "
     "Chỉ trả lời đúng 1 số nguyên, không giải thích thêm."
 )
-import torch
 import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
-from PIL import Image
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -132,14 +130,6 @@ def answer_question(keyframe_path: str, question: str) -> str:
 
         # Chuyển model sang GPU thủ công
         model = model.to(device).eval()
-
-        # Đọc ảnh
-        image = Image.open(keyframe_path).convert("RGB")
-        prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
-
-        # Chuẩn bị pixel_values
-        transform = model.build_transform(input_size=448)
-                # Đọc ảnh + tiling chuẩn InternVL
         pixel_values = load_image(keyframe_path, input_size=448, max_num=12)
         pixel_values = pixel_values.to(dtype=dtype, device=device)
 
