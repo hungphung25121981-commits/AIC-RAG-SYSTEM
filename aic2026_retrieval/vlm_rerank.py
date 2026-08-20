@@ -29,10 +29,8 @@ RERANK_PROMPT_TEMPLATE = (
     "0-10 (0 = hoàn toàn không liên quan, 10 = khớp hoàn hảo mọi chi tiết). "
     "Chỉ trả lời đúng 1 số nguyên, không giải thích thêm."
 )
-
-
 def answer_question(keyframe_path: str, question: str) -> str:
-    """Trả lời câu hỏi VQA bằng InternVL2.5 không bị lỗi Meta Tensor."""
+    """Trả lời câu hỏi VQA bằng InternVL2.5 - Đã fix triệt để Meta Tensor trên Vision Tower."""
     if not os.path.exists(keyframe_path):
         return f"Không tìm thấy file keyframe tại: {keyframe_path}"
 
@@ -43,38 +41,37 @@ def answer_question(keyframe_path: str, question: str) -> str:
     print(f"[VQA] Loading model from Hugging Face: {model_id}...")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # Ép dùng float16 nếu bfloat16 bị lỗi trên một số dòng GPU Kaggle
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    dtype = torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16
 
     try:
-        # BẮT BUỘC: device_map=None và low_cpu_mem_usage=False để nạp 100% trọng số thực
+        # Load trực tiếp với device_map="cuda" để ép toàn bộ Sub-modules (kể cả Vision) vào GPU
         model = AutoModel.from_pretrained(
             model_id,
             torch_dtype=dtype,
             trust_remote_code=True,
-            low_cpu_mem_usage=False,
-            device_map=None
+            device_map="cuda" if torch.cuda.is_available() else None,
+            low_cpu_mem_usage=False
         ).eval()
 
-        # Đưa toàn bộ module sang GPU
-        model = model.to(device)
+        # Dòng quan trọng: Ép Vision Model ra khỏi trạng thái Meta nếu còn sót lại
+        if hasattr(model, "vision_model"):
+            model.vision_model = model.vision_model.to(device=device, dtype=dtype)
 
         tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, use_fast=False)
         image = Image.open(keyframe_path).convert("RGB")
 
         prompt = f"<image>\nQuestion: {question}\nAnswer in Vietnamese concise and accurate:"
 
-        # Xử lý ảnh bằng hàm build_transform nội bộ của InternVL
+        # Chuẩn bị pixel_values
         transform = model.build_transform(input_size=448)
-        pixel_values = transform(image).unsqueeze(0).to(dtype).to(device)
+        pixel_values = transform(image).unsqueeze(0).to(dtype=dtype, device=device)
 
         generation_config = dict(max_new_tokens=128, do_sample=False)
         
-        # Chạy suy luận
         with torch.no_grad():
             response, _ = model.chat(tokenizer, pixel_values, prompt, generation_config)
 
-        # Giải phóng VRAM lập tức
+        # Giải phóng GPU VRAM ngay lập tức
         del model
         del pixel_values
         if torch.cuda.is_available():
@@ -84,7 +81,6 @@ def answer_question(keyframe_path: str, question: str) -> str:
 
     except Exception as e:
         return f"[ERROR VQA Runtime]: {e}"
-
 
 class VLMReranker:
     def __init__(self):
